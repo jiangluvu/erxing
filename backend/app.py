@@ -37,6 +37,9 @@ VOICE_MAP = {"小羊": "zh-CN-YunxiNeural", "小姜": "zh-CN-XiaoxiaoNeural"}
 
 client = anthropic.Anthropic(api_key=ZHI_API_KEY or "dummy", base_url=ZHI_BASE_URL)
 
+FFMPEG_PATH = shutil.which("ffmpeg") or "ffmpeg"
+FFPROBE_PATH = shutil.which("ffprobe") or "ffprobe"
+
 # ── Logging ──
 
 def write_log(entry: dict):
@@ -270,7 +273,7 @@ def _concat_mp3(segments: list[str], out_path: str) -> str:
         for sf in segments:
             f.write(f"file '{Path(sf).as_posix()}'\n")
     subprocess.run(
-        ["ffmpeg", "-f", "concat", "-safe", "0", "-i", str(list_file),
+        [FFMPEG_PATH or "ffmpeg", "-f", "concat", "-safe", "0", "-i", str(list_file),
          "-c", "copy", str(out_path)],
         check=True, capture_output=True
     )
@@ -296,7 +299,7 @@ def tts_script(script: list[dict]) -> str:
     # Get duration from ffprobe
     try:
         dur = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+            [FFPROBE_PATH or "ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", str(out_path)],
             capture_output=True, text=True, check=True
         )
@@ -739,7 +742,7 @@ def api_tts():
         return jsonify({"error": "script 不能为空"}), 400
 
     try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+        subprocess.run([FFMPEG_PATH or "ffmpeg", "-version"], capture_output=True, check=True)
     except Exception:
         return jsonify({"error": "服务器缺少 ffmpeg"}), 500
 

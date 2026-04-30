@@ -11,7 +11,6 @@ from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import anthropic
 import edge_tts
-from pydub import AudioSegment
 
 load_dotenv()
 app = Flask(__name__)
@@ -263,6 +262,22 @@ def fetch_article(url: str) -> tuple[str, str]:
 
 # ── TTS ──
 
+def _concat_mp3(segments: list[str], out_path: str) -> str:
+    """Concatenate MP3 files using ffmpeg. Returns out_path."""
+    tmp_dir = Path(out_path).parent
+    list_file = tmp_dir / "concat_list.txt"
+    with open(list_file, "w", encoding="utf-8") as f:
+        for sf in segments:
+            f.write(f"file '{Path(sf).as_posix()}'\n")
+    subprocess.run(
+        ["ffmpeg", "-f", "concat", "-safe", "0", "-i", str(list_file),
+         "-c", "copy", str(out_path)],
+        check=True, capture_output=True
+    )
+    for sf in segments:
+        os.unlink(sf)
+    return str(out_path)
+
 async def _tts_one(text: str, voice: str, path: str):
     await edge_tts.Communicate(text, voice).save(path)
 
@@ -276,14 +291,19 @@ def tts_script(script: list[dict]) -> str:
         asyncio.run(_tts_one(item["text"], voice, str(out)))
         segments.append(str(out))
 
-    combined = AudioSegment.empty()
-    for sf in segments:
-        combined += AudioSegment.from_file(sf, format="mp3")
-        os.unlink(sf)
-
     out_path = tmp_dir / "podcast.mp3"
-    combined.export(str(out_path), format="mp3")
-    logger.info(f"TTS done: {out_path} ({len(combined)/1000:.1f}s)")
+    _concat_mp3(segments, str(out_path))
+    # Get duration from ffprobe
+    try:
+        dur = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(out_path)],
+            capture_output=True, text=True, check=True
+        )
+        duration_s = float(dur.stdout.strip())
+        logger.info(f"TTS done: {out_path} ({duration_s:.1f}s)")
+    except Exception:
+        logger.info(f"TTS done: {out_path}")
     return str(out_path)
 
 # ── TTFA Streaming Generation ──
@@ -387,12 +407,8 @@ def _tts_script_segment(script: list[dict], tag: str = "seg") -> str:
         for f in as_completed(futures):
             i, path = f.result()
             segments[i] = path
-    combined = AudioSegment.empty()
-    for sf in segments:
-        combined += AudioSegment.from_file(sf, format="mp3")
-        os.unlink(sf)
     out_path = tmp_dir / f"{tag}.mp3"
-    combined.export(str(out_path), format="mp3")
+    _concat_mp3(segments, str(out_path))
     return str(out_path)
 
 
@@ -723,8 +739,7 @@ def api_tts():
         return jsonify({"error": "script 不能为空"}), 400
 
     try:
-        AudioSegment.converter = shutil.which("ffmpeg") or "ffmpeg"
-        AudioSegment.silent(duration=100)
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
     except Exception:
         return jsonify({"error": "服务器缺少 ffmpeg"}), 500
 

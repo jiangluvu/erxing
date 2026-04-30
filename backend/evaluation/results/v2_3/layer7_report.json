@@ -1,0 +1,126 @@
+{
+  "report_metadata": {
+    "version": "v2_3",
+    "benchmark_version": "v1",
+    "generated_at": "2026-04-29T12:21:12.164525+00:00",
+    "model": "deepseek-v4-flash",
+    "eval_model": "gpt-4o-mini"
+  },
+  "decision": {
+    "go_nogo": "GO",
+    "biggest_bottleneck": "LLM 延迟 (42012ms) — 问题位于 Layer 2",
+    "thresholds_applied": {
+      "layer2_min_success_rate": 80.0,
+      "layer4_min_content_accuracy": 3.5,
+      "layer4_min_dialogue_naturalness": 3.5,
+      "layer4_min_scene_fit": 3.0,
+      "layer5_min_completion_rate": 20.0,
+      "layer5_min_repeat_usage_rate": 15.0,
+      "layer6_min_conversation_score": 3.0
+    },
+    "threshold_breaches": []
+  },
+  "layer2_performance": {
+    "total": 10,
+    "success_count": 10,
+    "failed_count": 0,
+    "success_rate": 100.0,
+    "avg_latency_ms": 45692.6,
+    "avg_parse_ms": 0.0,
+    "avg_llm_ms": 42012.5,
+    "avg_tts_ms": 0.0,
+    "min_latency": 22759,
+    "max_latency": 98081,
+    "format_rate": 100.0,
+    "stable_rate": 100.0
+  },
+  "layer4_auto_eval": {
+    "averages": {
+      "content_accuracy": 4.0,
+      "dialogue_naturalness": 4.6,
+      "scene_fit": 4.3
+    },
+    "by_category": {
+      "sn": {
+        "content_accuracy": 4.0,
+        "dialogue_naturalness": 4.6,
+        "scene_fit": 4.3
+      }
+    },
+    "per_item": [
+      {
+        "item_id": "sn_001",
+        "content_accuracy": 4,
+        "dialogue_naturalness": 5,
+        "scene_fit": 4
+      },
+      {
+        "item_id": "sn_002",
+        "content_accuracy": 5,
+        "dialogue_naturalness": 4,
+        "scene_fit": 5
+      },
+      {
+        "item_id": "sn_003",
+        "content_accuracy": 4,
+        "dialogue_naturalness": 5,
+        "scene_fit": 4
+      },
+      {
+        "item_id": "sn_004",
+        "content_accuracy": 4,
+        "dialogue_naturalness": 4,
+        "scene_fit": 5
+      },
+      {
+        "item_id": "sn_005",
+        "content_accuracy": 4,
+        "dialogue_naturalness": 5,
+        "scene_fit": 4
+      },
+      {
+        "item_id": "sn_006",
+        "content_accuracy": 4,
+        "dialogue_naturalness": 5,
+        "scene_fit": 4
+      },
+      {
+        "item_id": "sn_007",
+        "content_accuracy": 3.0,
+        "dialogue_naturalness": 3.0,
+        "scene_fit": 3.0
+      },
+      {
+        "item_id": "sn_008",
+        "content_accuracy": 4,
+        "dialogue_naturalness": 5,
+        "scene_fit": 5
+      },
+      {
+        "item_id": "sn_009",
+        "content_accuracy": 4,
+        "dialogue_naturalness": 5,
+        "scene_fit": 5
+      },
+      {
+        "item_id": "sn_010",
+        "content_accuracy": 4,
+        "dialogue_naturalness": 5,
+        "scene_fit": 4
+      }
+    ]
+  },
+  "layer5_mvp": {
+    "completion_rate": 33.33333333333333,
+    "repeat_usage_rate": 30.0,
+    "engagement_rate": 16.666666666666664,
+    "drop_off_rate": 66.66666666666667,
+    "sample_size": 30
+  },
+  "layer6_human_eval": {
+    "entries_count": 0,
+    "rater_count": 0,
+    "avg_scores": {},
+    "per_rater": {}
+  }
+}

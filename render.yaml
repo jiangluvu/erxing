@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: erxing
+    runtime: python
+    repo: https://github.com/jxy700516981216/erxing
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && gunicorn app:app --workers 2 --timeout 120 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: ZHI_API_KEY
+        sync: false

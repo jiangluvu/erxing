@@ -1,0 +1,14 @@
+{
+  "total": 40,
+  "success_count": 35,
+  "failed_count": 5,
+  "success_rate": 87.5,
+  "avg_latency_ms": 53414.2,
+  "avg_parse_ms": 0.0,
+  "avg_llm_ms": 42675.6,
+  "avg_tts_ms": 0.0,
+  "min_latency": 19541,
+  "max_latency": 190225,
+  "format_rate": 87.5,
+  "stable_rate": 87.5
+}

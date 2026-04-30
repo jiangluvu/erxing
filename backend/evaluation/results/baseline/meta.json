@@ -1,0 +1,7 @@
+{
+  "version": "baseline",
+  "timestamp": "2026-04-29T10:31:55.559267+00:00",
+  "model": "deepseek-v4-flash",
+  "eval_model": "gpt-4o-mini",
+  "benchmark": "v1"
+}

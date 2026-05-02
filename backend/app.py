@@ -12,6 +12,8 @@ from flask_cors import CORS
 import anthropic
 import edge_tts
 
+from rag import init_knowledge_base
+
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
@@ -468,6 +470,10 @@ def _background_full_generation(session_id: str, url: str, text: str,
 
         complete_dialogue = opening_script + full_dialogue
         _session_set(session_id, "full_script", complete_dialogue)
+
+        # Store article title and content for recommendations
+        _session_set(session_id, "article_title", title)
+        _session_set(session_id, "article_content", clean_text)
         _session_set(session_id, "progress", 75)
 
         # Self-evaluation
@@ -591,6 +597,9 @@ def api_generation_status(session_id: str):
     full_script = session.get("full_script")
     if full_script:
         resp["script"] = full_script
+    if session.get("article_content"):
+        resp["article_title"] = session.get("article_title", "")
+        resp["article_content"] = session["article_content"]
     return jsonify(resp)
 
 
@@ -794,9 +803,64 @@ def index():
 def frontend_assets(path):
     return send_from_directory(FRONTEND_DIR / "assets", path)
 
+# ── RAG Recommendation ──
+
+def _get_kb():
+    from rag import kb
+    return kb
+
+@app.route("/api/recommend", methods=["POST"])
+def api_recommend():
+    """推荐文章。传入当前文章的 title + content，返回 3 篇相似文章。"""
+    try:
+        data = request.get_json(force=True)
+        title = (data.get("title") or "").strip()
+        content = (data.get("content") or "").strip()
+        if not title and not content:
+            return jsonify({"error": "需要 title 或 content"}), 400
+        kb = _get_kb()
+        if not kb or kb.count() == 0:
+            return jsonify({"recommendations": []})
+        results = kb.search(title, content, top_k=3)
+        return jsonify({"recommendations": results})
+    except Exception as e:
+        logger.error(f"Recommend failed: {e}", exc_info=True)
+        return jsonify({"error": str(e)[:200]}), 500
+
+@app.route("/api/recommend/add", methods=["POST"])
+def api_recommend_add():
+    """将文章加入知识库（可选，用户生成播客时自动收录）。"""
+    try:
+        data = request.get_json(force=True)
+        title = (data.get("title") or "").strip()
+        content = (data.get("content") or "").strip()
+        if not title or not content:
+            return jsonify({"error": "需要 title 和 content"}), 400
+        kb = _get_kb()
+        if not kb:
+            from rag import init_knowledge_base
+            kb = init_knowledge_base()
+        article = kb.add(
+            title=title,
+            content=content,
+            url=data.get("url", ""),
+            summary=data.get("summary", content[:80] + "..."),
+        )
+        return jsonify({"id": article["id"], "title": article["title"]})
+    except Exception as e:
+        logger.error(f"Recommend add failed: {e}", exc_info=True)
+        return jsonify({"error": str(e)[:200]}), 500
+
 if __name__ == "__main__":
     cleanup_thread = threading.Thread(target=_session_cleanup_loop, daemon=True)
     cleanup_thread.start()
+    # 初始化 RAG 知识库
+    try:
+        from rag import init_knowledge_base
+        init_knowledge_base()
+        logger.info("RAG knowledge base initialized")
+    except Exception as e:
+        logger.warning(f"RAG init failed (non-fatal): {e}")
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_ENV") == "development"
     app.run(debug=debug, host="0.0.0.0", port=port)

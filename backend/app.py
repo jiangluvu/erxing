@@ -12,8 +12,6 @@ from flask_cors import CORS
 import anthropic
 import edge_tts
 
-from rag import init_knowledge_base
-
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
@@ -806,8 +804,9 @@ def frontend_assets(path):
 # ── RAG Recommendation ──
 
 def _get_kb():
-    from rag import kb
-    return kb
+    """Lazy-init knowledge base singleton (works with gunicorn)."""
+    from rag import init_knowledge_base
+    return init_knowledge_base()
 
 @app.route("/api/recommend", methods=["POST"])
 def api_recommend():
@@ -851,16 +850,27 @@ def api_recommend_add():
         logger.error(f"Recommend add failed: {e}", exc_info=True)
         return jsonify({"error": str(e)[:200]}), 500
 
-if __name__ == "__main__":
-    cleanup_thread = threading.Thread(target=_session_cleanup_loop, daemon=True)
-    cleanup_thread.start()
-    # 初始化 RAG 知识库
+# ── Startup: init RAG knowledge base (module-level, runs in gunicorn too) ──
+
+_RAG_INIT_DONE = False
+
+def _init_rag():
+    global _RAG_INIT_DONE
+    if _RAG_INIT_DONE:
+        return
     try:
         from rag import init_knowledge_base
         init_knowledge_base()
         logger.info("RAG knowledge base initialized")
+        _RAG_INIT_DONE = True
     except Exception as e:
         logger.warning(f"RAG init failed (non-fatal): {e}")
+
+_init_rag()
+
+if __name__ == "__main__":
+    cleanup_thread = threading.Thread(target=_session_cleanup_loop, daemon=True)
+    cleanup_thread.start()
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_ENV") == "development"
     app.run(debug=debug, host="0.0.0.0", port=port)

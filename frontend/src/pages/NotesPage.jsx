@@ -190,6 +190,53 @@ export default function NotesPage() {
           </p>
         </div>
       )}
+
+      {/* Edit Modal */}
+      {editingId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-6 w-full max-w-sm mx-4">
+            <h3 className="text-white font-semibold mb-4">编辑笔记</h3>
+            <div className="mb-4">
+              <label className="block text-xs text-slate-500 mb-1">标题</label>
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                className="w-full bg-[#0c0c0e] border border-[#2a2a2a] rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-pink"
+              />
+            </div>
+            <div className="mb-6">
+              <label className="block text-xs text-slate-500 mb-1">内容</label>
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                rows={4}
+                className="w-full bg-[#0c0c0e] border border-[#2a2a2a] rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-pink resize-none"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleEditSave}
+                className="flex-1 py-2.5 bg-white text-black rounded-xl text-sm font-bold hover:bg-white/90 transition-all"
+              >
+                保存
+              </button>
+              <button
+                onClick={closeEdit}
+                className="flex-1 py-2.5 bg-white/5 text-white rounded-xl text-sm hover:bg-white/10 transition-all"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-[#1a1a1c] border border-[#2a2a2a] text-white text-sm px-5 py-2.5 rounded-xl shadow-lg z-50">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

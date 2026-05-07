@@ -1,42 +1,50 @@
-import { useState } from "react";
-import { Plus, Folder, Headphones, MoreHorizontal } from "lucide-react";
-
-const mockCollections = [
-  {
-    id: "1",
-    name: "AI 专栏",
-    count: 5,
-    color: "text-brand-pink",
-    bg: "bg-brand-pink/10",
-    items: ["AI 时代的数字生活变革", "DeepSeek 崛起", "特斯拉 FSD 入华"],
-  },
-  {
-    id: "2",
-    name: "科技周报",
-    count: 3,
-    color: "text-brand-tertiary",
-    bg: "bg-brand-tertiary/10",
-    items: ["SpaceX 星舰第五飞", "2026 新能源汽车趋势"],
-  },
-];
+import { useState, useEffect } from "react";
+import { Plus, Folder, Headphones, MoreHorizontal, Trash2 } from "lucide-react";
+import {
+  getCollections,
+  addCollection,
+  deleteCollection,
+} from "../api";
 
 export default function CollectionsPage() {
-  const [collections, setCollections] = useState(mockCollections);
+  const [collections, setCollections] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const handleAdd = () => {
+  useEffect(() => {
+    getCollections()
+      .then((data) => {
+        setCollections(data?.collections || []);
+      })
+      .catch(() => setCollections([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleAdd = async () => {
     const name = window.prompt("合集名称");
     if (!name?.trim()) return;
-    setCollections((prev) => [
-      ...prev,
-      {
-        id: String(Date.now()),
-        name: name.trim(),
-        count: 0,
-        color: "text-brand-pink",
-        bg: "bg-brand-pink/10",
-        items: [],
-      },
-    ]);
+    try {
+      const data = await addCollection({ name: name.trim() });
+      setCollections(data?.collections || []);
+    } catch {
+      setCollections((prev) => [
+        ...prev,
+        {
+          id: String(Date.now()),
+          name: name.trim(),
+          session_ids: [],
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await deleteCollection(id);
+      setCollections((prev) => prev.filter((c) => c.id !== id));
+    } catch {
+      setCollections((prev) => prev.filter((c) => c.id !== id));
+    }
   };
 
   return (
@@ -55,34 +63,47 @@ export default function CollectionsPage() {
         </button>
       </div>
 
-      {collections.length > 0 ? (
+      {loading ? (
+        <div className="text-center py-12 text-sm text-slate-500">加载中…</div>
+      ) : collections.length > 0 ? (
         <div className="grid grid-cols-2 gap-4">
-          {collections.map((col) => (
+          {collections.map((col, i) => (
             <div
               key={col.id}
               className="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5 hover:border-white/10 transition-all cursor-pointer group"
             >
               <div className="flex items-center gap-3 mb-4">
                 <div
-                  className={`w-10 h-10 rounded-xl ${col.bg} flex items-center justify-center`}
+                  className={`w-10 h-10 rounded-xl ${
+                    i % 2 === 0 ? "bg-brand-pink/10" : "bg-brand-tertiary/10"
+                  } flex items-center justify-center`}
                 >
-                  <Folder size={18} className={col.color} />
+                  <Folder
+                    size={18}
+                    className={i % 2 === 0 ? "text-brand-pink" : "text-brand-tertiary"}
+                  />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-semibold text-white truncate">
-                    {col.name}
-                  </h3>
-                  <p className="text-xs text-slate-500">{col.count} 个播客</p>
+                  <h3 className="text-sm font-semibold text-white truncate">{col.name}</h3>
+                  <p className="text-xs text-slate-500">
+                    {(col.session_ids || []).length} 个播客
+                  </p>
                 </div>
-                <button className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-all">
-                  <MoreHorizontal size={16} />
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(col.id);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-red-400 transition-all"
+                >
+                  <Trash2 size={16} />
                 </button>
               </div>
               <div className="space-y-2">
-                {col.items.map((item, i) => (
-                  <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
+                {(col.session_ids || []).slice(0, 3).map((sid, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-xs text-slate-400">
                     <Headphones size={12} />
-                    <span className="truncate">{item}</span>
+                    <span className="truncate">{sid}</span>
                   </div>
                 ))}
               </div>
@@ -90,7 +111,6 @@ export default function CollectionsPage() {
           ))}
         </div>
       ) : (
-        /* Empty State */
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
             <Folder size={28} className="text-slate-600" />

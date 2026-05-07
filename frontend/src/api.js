@@ -119,3 +119,69 @@ export function generateSubscription(id) {
     body: JSON.stringify({ id }),
   });
 }
+
+// ============ FAVORITES ============
+export function getFavorites() {
+  return fetchJSON("/favorites");
+}
+
+export function addFavorite(session_id) {
+  return fetchJSON("/favorites", {
+    method: "POST",
+    body: JSON.stringify({ session_id }),
+  });
+}
+
+export function deleteFavorite(id) {
+  return fetch(`${API_BASE}/favorites?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+// ============ HISTORY ============
+export function getHistory() {
+  return fetchJSON("/history");
+}
+
+export function addHistory({ session_id, progress, duration }) {
+  return fetchJSON("/history", {
+    method: "POST",
+    body: JSON.stringify({ session_id, progress, duration }),
+  });
+}
+
+export function deleteHistory(id) {
+  return fetch(`${API_BASE}/history?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+// ============ COLLECTIONS ============
+export function getCollections() {
+  return fetchJSON("/collections");
+}
+
+export function addCollection({ name, session_ids = [] }) {
+  return fetchJSON("/collections", {
+    method: "POST",
+    body: JSON.stringify({ name, session_ids }),
+  });
+}
+
+export function updateCollection({ id, name, session_ids }) {
+  return fetchJSON("/collections", {
+    method: "PUT",
+    body: JSON.stringify({ id, name, session_ids }),
+  });
+}
+
+export function deleteCollection(id) {
+  return fetch(`${API_BASE}/collections?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+// ============ SEARCH ============
+export function search(q) {
+  return fetchJSON(`/search?q=${encodeURIComponent(q)}`);
+}

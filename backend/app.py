@@ -1228,6 +1228,226 @@ def api_recommend_add():
         logger.error(f"Recommend add failed: {e}", exc_info=True)
         return jsonify({"error": str(e)[:200]}), 500
 
+# ── Favorites API (JSON file storage) ──
+
+FAVS_PATH = BASE_DIR / "favorites.jsonl"
+
+def _load_favs() -> list[dict]:
+    if not FAVS_PATH.exists():
+        return []
+    favs = []
+    with open(FAVS_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    favs.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    return favs
+
+def _save_favs(favs: list[dict]):
+    with open(FAVS_PATH, "w", encoding="utf-8") as f:
+        for fa in favs:
+            f.write(json.dumps(fa, ensure_ascii=False) + "\n")
+
+@app.route("/api/favorites", methods=["GET", "POST", "DELETE"])
+def api_favorites():
+    if request.method == "GET":
+        return jsonify({"favorites": _load_favs()})
+
+    elif request.method == "POST":
+        data = request.get_json(force=True) or {}
+        session_id = data.get("session_id", "").strip()
+        if not session_id:
+            return jsonify({"error": "需要 session_id"}), 400
+        favs = _load_favs()
+        # dedup
+        favs = [f for f in favs if f.get("session_id") != session_id]
+        favs.append({
+            "id": str(uuid.uuid4()),
+            "session_id": session_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        _save_favs(favs)
+        return jsonify({"status": "added"}), 201
+
+    elif request.method == "DELETE":
+        fav_id = request.args.get("id", "")
+        if not fav_id:
+            return jsonify({"error": "需要 favorite id"}), 400
+        favs = _load_favs()
+        favs = [f for f in favs if f.get("id") != fav_id]
+        _save_favs(favs)
+        return jsonify({"status": "deleted"})
+
+
+# ── History API (JSON file storage) ──
+
+HIST_PATH = BASE_DIR / "history.jsonl"
+
+def _load_history() -> list[dict]:
+    if not HIST_PATH.exists():
+        return []
+    hist = []
+    with open(HIST_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    hist.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    return hist
+
+def _save_history(hist: list[dict]):
+    with open(HIST_PATH, "w", encoding="utf-8") as f:
+        for h in hist:
+            f.write(json.dumps(h, ensure_ascii=False) + "\n")
+
+@app.route("/api/history", methods=["GET", "POST", "DELETE"])
+def api_history():
+    if request.method == "GET":
+        items = _load_history()
+        items.sort(key=lambda x: x.get("last_played_at", ""), reverse=True)
+        return jsonify({"history": items})
+
+    elif request.method == "POST":
+        data = request.get_json(force=True) or {}
+        session_id = data.get("session_id", "").strip()
+        if not session_id:
+            return jsonify({"error": "需要 session_id"}), 400
+        hist = _load_history()
+        # update or append
+        existing = next((h for h in hist if h.get("session_id") == session_id), None)
+        if existing:
+            existing["progress"] = data.get("progress", existing.get("progress", 0))
+            existing["duration"] = data.get("duration", existing.get("duration", 0))
+            existing["last_played_at"] = datetime.now(timezone.utc).isoformat()
+        else:
+            hist.append({
+                "id": str(uuid.uuid4()),
+                "session_id": session_id,
+                "progress": data.get("progress", 0),
+                "duration": data.get("duration", 0),
+                "last_played_at": datetime.now(timezone.utc).isoformat(),
+            })
+        _save_history(hist)
+        return jsonify({"status": "saved"}), 201
+
+    elif request.method == "DELETE":
+        hist_id = request.args.get("id", "")
+        if not hist_id:
+            return jsonify({"error": "需要 history id"}), 400
+        hist = _load_history()
+        hist = [h for h in hist if h.get("id") != hist_id]
+        _save_history(hist)
+        return jsonify({"status": "deleted"})
+
+
+# ── Collections API (JSON file storage) ──
+
+COLLS_PATH = BASE_DIR / "collections.jsonl"
+
+def _load_colls() -> list[dict]:
+    if not COLLS_PATH.exists():
+        return []
+    colls = []
+    with open(COLLS_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    colls.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    return colls
+
+def _save_colls(colls: list[dict]):
+    with open(COLLS_PATH, "w", encoding="utf-8") as f:
+        for c in colls:
+            f.write(json.dumps(c, ensure_ascii=False) + "\n")
+
+@app.route("/api/collections", methods=["GET", "POST", "PUT", "DELETE"])
+def api_collections():
+    if request.method == "GET":
+        return jsonify({"collections": _load_colls()})
+
+    elif request.method == "POST":
+        data = request.get_json(force=True) or {}
+        name = data.get("name", "").strip()
+        if not name:
+            return jsonify({"error": "需要合集名称"}), 400
+        colls = _load_colls()
+        colls.append({
+            "id": str(uuid.uuid4()),
+            "name": name,
+            "session_ids": data.get("session_ids", []),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        _save_colls(colls)
+        return jsonify({"collections": colls}), 201
+
+    elif request.method == "PUT":
+        data = request.get_json(force=True) or {}
+        coll_id = data.get("id", "").strip()
+        if not coll_id:
+            return jsonify({"error": "需要合集 id"}), 400
+        colls = _load_colls()
+        for c in colls:
+            if c.get("id") == coll_id:
+                if "name" in data:
+                    c["name"] = data["name"].strip()
+                if "session_ids" in data:
+                    c["session_ids"] = data["session_ids"]
+                c["updated_at"] = datetime.now(timezone.utc).isoformat()
+                _save_colls(colls)
+                return jsonify({"collection": c})
+        return jsonify({"error": "合集不存在"}), 404
+
+    elif request.method == "DELETE":
+        coll_id = request.args.get("id", "")
+        if not coll_id:
+            return jsonify({"error": "需要 collection id"}), 400
+        colls = _load_colls()
+        colls = [c for c in colls if c.get("id") != coll_id]
+        _save_colls(colls)
+        return jsonify({"status": "deleted"})
+
+
+# ── Search API ──
+
+@app.route("/api/search", methods=["GET"])
+def api_search():
+    q = request.args.get("q", "").strip().lower()
+    if not q:
+        return jsonify({"podcasts": [], "articles": [], "subscriptions": []})
+
+    podcasts = []
+    with _session_lock:
+        for sid, s in _sessions.items():
+            title = s.get("title", "")
+            article_title = s.get("article_title", "")
+            if q in title.lower() or q in article_title.lower():
+                podcasts.append({
+                    "id": sid,
+                    "title": title or article_title,
+                    "status": s.get("status", ""),
+                    "platform": s.get("platform", "网页"),
+                    "duration": s.get("duration", "standard"),
+                    "created_at": s.get("created_at", 0),
+                })
+
+    subs = [s for s in _load_subs() if q in s.get("name", "").lower()]
+
+    articles = []
+    for a in EXPLORE_ARTICLES:
+        if q in a.get("title", "").lower() or q in a.get("desc", "").lower():
+            articles.append(a)
+
+    return jsonify({"podcasts": podcasts, "subscriptions": subs, "articles": articles})
+
+
 # ── Startup: init RAG knowledge base (module-level, runs in gunicorn too) ──
 
 _RAG_INIT_DONE = False

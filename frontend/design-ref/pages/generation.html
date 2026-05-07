@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html class="dark" lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+    body { font-family: 'Space Grotesk', -apple-system, 'PingFang SC', sans-serif; background-color: #0c0c0e; color: #f5dddb; margin: 0; }
+    i[data-lucide] { display: inline-block; vertical-align: middle; width: 18px; height: 18px; stroke-width: 2; }
+    @keyframes pulse-ring {
+        0% { transform: scale(0.8); opacity: 0.8; }
+        100% { transform: scale(1.4); opacity: 0; }
+    }
+    .avatar-ring::after {
+        content: '';
+        position: absolute;
+        inset: -6px;
+        border-radius: 50%;
+        border: 2px solid currentColor;
+        animation: pulse-ring 1.5s ease-out infinite;
+    }
+    .progress-bar {
+        background: linear-gradient(90deg, #ec4899, #52dea2);
+    }
+</style>
+<script>
+    tailwind.config = {
+        darkMode: "class",
+        theme: {
+            extend: {
+                colors: {
+                    "bg-main": "#0c0c0e", "bg-sidebar": "#1a1a1a", "bg-card": "#161618",
+                    "border-default": "#2a2a2a", "brand-pink": "#ec4899", "brand-tertiary": "#52dea2"
+                }
+            }
+        }
+    };
+</script>
+</head>
+<body class="flex min-h-screen">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-0 h-full w-[240px] bg-[#1a1a1a] border-r border-[#2a2a2a] flex flex-col z-50">
+<div class="p-6">
+<h2 class="text-xs font-medium text-slate-500 mb-6">欢迎 耳行 新用户!</h2>
+<div class="flex items-center gap-3 mb-8">
+<span class="text-2xl font-black text-brand-pink">耳行</span>
+<span class="bg-brand-pink/10 text-brand-pink text-[10px] px-2 py-0.5 rounded-full font-bold">PRO</span>
+</div>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./web.html">
+<i data-lucide="sparkles"></i><span>新播客</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="search"></i><span>全局搜索</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./my-podcasts.html">
+<i data-lucide="library"></i><span class="flex-1">我的播客</span><span class="text-[10px] text-slate-500">(3)</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="headphones"></i><span>产出物</span>
+</a>
+</nav>
+<div class="mt-8">
+<h3 class="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">探索</h3>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./subscriptions.html">
+<i data-lucide="rss"></i><span>订阅</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="flame"></i><span>热门</span>
+</a>
+</nav>
+</div>
+</div>
+<div class="mt-auto p-4 border-t border-[#2a2a2a]">
+<button class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all">
+<i data-lucide="log-in"></i><span>注册 / 登录</span>
+</button>
+</div>
+</aside>
+
+<!-- Main Content -->
+<main class="ml-[240px] flex-1 flex items-center justify-center p-10">
+<div class="max-w-lg w-full">
+<div class="text-center mb-10">
+<div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 mb-6">
+<span class="text-[10px] font-bold text-brand-pink uppercase tracking-wider">生成中</span>
+</div>
+<h1 class="text-2xl font-bold text-white mb-2">正在生成播客</h1>
+<p class="text-sm text-slate-500">预计需要 2-3 分钟，请稍候…</p>
+</div>
+
+<!-- Avatars -->
+<div class="flex items-center justify-center gap-16 mb-10">
+<div class="text-center">
+<div class="relative w-16 h-16 mx-auto mb-2">
+<div class="w-16 h-16 rounded-full bg-brand-pink/10 flex items-center justify-center text-brand-pink avatar-ring">
+<i data-lucide="user" style="width:28px;height:28px"></i>
+</div>
+</div>
+<div class="text-sm font-semibold text-white">小羊</div>
+<div class="text-xs text-slate-500 mt-0.5" id="yangStatus">正在读文章…</div>
+</div>
+<div class="text-center">
+<div class="relative w-16 h-16 mx-auto mb-2">
+<div class="w-16 h-16 rounded-full bg-brand-tertiary/10 flex items-center justify-center text-brand-tertiary">
+<i data-lucide="user" style="width:28px;height:28px"></i>
+</div>
+</div>
+<div class="text-sm font-semibold text-white">小姜</div>
+<div class="text-xs text-slate-500 mt-0.5" id="jiangStatus">等待中</div>
+</div>
+</div>
+
+<!-- Progress -->
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-6 mb-6">
+<div class="flex items-center justify-between mb-3">
+<span class="text-sm font-medium text-white" id="progressText">小羊正在读文章…</span>
+<span class="text-sm font-bold text-brand-pink" id="progressPercent">34%</span>
+</div>
+<div class="h-2 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full progress-bar rounded-full transition-all duration-500" style="width: 34%" id="progressBar"></div>
+</div>
+</div>
+
+<!-- Steps -->
+<div class="space-y-3 mb-8">
+<div class="flex items-center gap-3 text-sm">
+<i data-lucide="check-circle-2" class="text-brand-tertiary" style="width:16px;height:16px"></i>
+<span class="text-slate-400">读取并解析文章内容</span>
+</div>
+<div class="flex items-center gap-3 text-sm">
+<i data-lucide="check-circle-2" class="text-brand-tertiary" style="width:16px;height:16px"></i>
+<span class="text-slate-400">生成双人对话脚本</span>
+</div>
+<div class="flex items-center gap-3 text-sm">
+<i data-lucide="loader-2" class="text-brand-pink animate-spin" style="width:16px;height:16px"></i>
+<span class="text-white">合成语音（小羊：第 3 段 / 共 8 段）</span>
+</div>
+<div class="flex items-center gap-3 text-sm">
+<i data-lucide="circle" class="text-slate-700" style="width:16px;height:16px"></i>
+<span class="text-slate-600">混音与后处理</span>
+</div>
+</div>
+
+<!-- Actions -->
+<div class="flex items-center justify-center gap-4">
+<button class="px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-sm text-slate-400 hover:text-white transition-all border border-white/5">
+后台运行
+</button>
+<button class="px-5 py-2.5 rounded-xl bg-white/5 hover:bg-red-500/10 text-sm text-slate-400 hover:text-red-400 transition-all border border-white/5">
+取消生成
+</button>
+</div>
+</div>
+</main>
+<script>
+lucide.createIcons();
+// Simulate progress
+const statuses = [
+    { pct: 5, text: '小羊正在读文章…', yang: '正在读文章…', jiang: '等待中' },
+    { pct: 20, text: '小姜正在做笔记…', yang: '等待中', jiang: '正在做笔记…' },
+    { pct: 35, text: '小羊和小姜在讨论…', yang: '正在讨论…', jiang: '正在讨论…' },
+    { pct: 55, text: '小姜在划重点…', yang: '等待中', jiang: '在划重点…' },
+    { pct: 70, text: '小羊在做总结…', yang: '在做总结…', jiang: '等待中' },
+    { pct: 85, text: '正在合成语音…', yang: '语音合成中', jiang: '语音合成中' },
+    { pct: 95, text: '正在混音…', yang: '混音中', jiang: '混音中' }
+];
+let idx = 2;
+setInterval(() => {
+    const s = statuses[idx % statuses.length];
+    document.getElementById('progressBar').style.width = s.pct + '%';
+    document.getElementById('progressPercent').textContent = s.pct + '%';
+    document.getElementById('progressText').textContent = s.text;
+    document.getElementById('yangStatus').textContent = s.yang;
+    document.getElementById('jiangStatus').textContent = s.jiang;
+    idx++;
+}, 2500);
+</script>
+</body>
+</html>

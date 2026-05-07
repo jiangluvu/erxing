@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background-color: #0c0c0e;
+            color: #f5dddb;
+            margin: 0;
+        }
+        i[data-lucide] {
+            display: inline-block;
+            vertical-align: middle;
+            width: 18px;
+            height: 18px;
+            stroke-width: 2;
+        }
+        .glass-panel {
+            background: rgba(18, 18, 18, 0.8);
+            backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .accent-glow:focus-within {
+            box-shadow: 0 0 20px rgba(236, 72, 153, 0.15);
+            border-color: rgba(236, 72, 153, 0.5);
+        }
+        .sidebar-item-active {
+            border-right: 2px solid #ec4899;
+            color: #ec4899;
+            font-weight: 700;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "surface-bright": "#453635",
+                        "outline": "#a78a88",
+                        "surface-container": "#291c1c",
+                        "secondary-fixed": "#d6e3ff",
+                        "surface-container-high": "#352726",
+                        "surface-variant": "#403130",
+                        "surface-container-highest": "#403130",
+                        "primary-container": "#ff6b6b",
+                        "inverse-surface": "#f5dddb",
+                        "surface": "#1c1010",
+                        "secondary": "#a9c7ff",
+                        "primary": "#ffb3b0",
+                        "error-container": "#93000a",
+                        "tertiary": "#52dea2",
+                        "background": "#1c1010",
+                        "primary-fixed-dim": "#ffb3b0",
+                        "on-tertiary-fixed": "#002113",
+                        "surface-dim": "#1c1010",
+                        "primary-fixed": "#ffdad8",
+                        "surface-container-low": "#251818",
+                        "on-secondary-fixed-variant": "#00468c",
+                        "on-secondary-fixed": "#001b3d",
+                        "tertiary-fixed": "#72fbbc",
+                        "inverse-on-surface": "#3b2d2c",
+                        "on-tertiary-fixed-variant": "#005236",
+                        "on-primary-fixed-variant": "#8c1520",
+                        "secondary-fixed-dim": "#a9c7ff",
+                        "on-error-container": "#ffdad6",
+                        "error": "#ffb4ab",
+                        "on-primary-fixed": "#410006",
+                        "on-surface-variant": "#e0bfbd",
+                        "on-tertiary-container": "#003b26",
+                        "on-error": "#690005",
+                        "on-secondary-container": "#cdddff",
+                        "inverse-primary": "#ae2f34",
+                        "on-primary-container": "#6d0010",
+                        "tertiary-container": "#00b179",
+                        "surface-tint": "#ffb3b0",
+                        "outline-variant": "#584140",
+                        "on-tertiary": "#003824",
+                        "on-secondary": "#003063",
+                        "on-background": "#f5dddb",
+                        "tertiary-fixed-dim": "#52dea2",
+                        "surface-container-lowest": "#160b0b",
+                        "secondary-container": "#005fbc",
+                        "on-primary": "#68000f",
+                        "on-surface": "#f5dddb",
+                        "brand-pink": "#ec4899"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    spacing: {
+                        "xl": "64px",
+                        "base": "8px",
+                        "xs": "4px",
+                        "sm": "12px",
+                        "gutter": "20px",
+                        "margin-desktop": "48px",
+                        "lg": "40px",
+                        "margin-mobile": "16px",
+                        "md": "24px"
+                    },
+                    fontFamily: {
+                        "body-md": ["Space Grotesk"],
+                        "label-caps": ["Space Grotesk"],
+                        "display-xl": ["Space Grotesk"],
+                        "body-sm": ["Space Grotesk"],
+                        "headline-md": ["Space Grotesk"],
+                        "body-lg": ["Space Grotesk"],
+                        "headline-sm": ["Space Grotesk"],
+                        "mono-data": ["Space Grotesk"],
+                        "display-lg": ["Space Grotesk"]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="flex min-h-screen">
+<!-- SideNavBar (Shared Component Logic) -->
+<aside class="fixed left-0 top-0 h-full w-[240px] bg-[#1a1a1a] border-r border-[#2a2a2a] flex flex-col z-50">
+<div class="p-6">
+<h2 class="text-xs font-medium text-slate-500 mb-6 font-body-sm">欢迎 耳行 新用户!</h2>
+<div class="flex items-center gap-3 mb-8">
+<span class="text-2xl font-black text-brand-pink font-display-lg">耳行</span>
+<span class="bg-brand-pink/10 text-brand-pink text-[10px] px-2 py-0.5 rounded-full font-bold">PRO</span>
+</div>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-white bg-white/5 font-medium group transition-all" href="#">
+<i data-lucide="sparkles" class="text-brand-pink"></i>
+<span>新播客</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="search"></i>
+<span>全局搜索</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="library"></i>
+<span class="flex-1">我的播客</span>
+<span class="text-[10px] text-slate-500">(0)</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="headphones"></i>
+<span>产出物</span>
+</a>
+</nav>
+<div class="mt-8">
+<h3 class="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2 font-label-caps">探索</h3>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="rss"></i>
+<span>订阅</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="flame"></i>
+<span>热门</span>
+</a>
+</nav>
+</div>
+<div class="mt-8">
+<h3 class="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2 font-label-caps">合集</h3>
+<nav class="space-y-1">
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all text-left">
+<i data-lucide="plus"></i>
+<span>新合集</span>
+</button>
+<div class="px-3 py-4 text-xs text-slate-600 font-body-sm italic">
+                        暂无合集
+                    </div>
+</nav>
+</div>
+</div>
+<div class="mt-auto p-4 border-t border-[#2a2a2a]">
+<button class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all">
+<i data-lucide="log-in"></i>
+<span>注册 / 登录</span>
+</button>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-[240px] flex-1 relative overflow-hidden flex flex-col items-center justify-center p-xl">
+<!-- Background Decorative Element -->
+<div class="absolute top-[-10%] right-[-5%] w-[600px] h-[600px] bg-brand-pink/5 rounded-full blur-[120px] pointer-events-none"></div>
+<div class="absolute bottom-[-10%] left-[-5%] w-[400px] h-[400px] bg-secondary/5 rounded-full blur-[100px] pointer-events-none"></div>
+<div class="max-w-2xl w-full space-y-md relative z-10">
+<!-- Header Section -->
+<div class="text-center space-y-sm">
+<div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 backdrop-blur-sm">
+<span class="text-[11px] font-bold text-slate-400 font-label-caps tracking-wider">支持 AI 双人对话播客</span>
+<span class="h-1 w-1 rounded-full bg-brand-pink"></span>
+<span class="text-[10px] font-black text-brand-pink font-mono-data">NEW</span>
+</div>
+<h1 class="text-white font-headline-md font-bold tracking-tight text-3xl">
+                    耳行 让每一篇文章，变成一场对谈
+                </h1>
+</div>
+<!-- Input Card -->
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-2xl overflow-hidden accent-glow transition-all duration-300">
+<!-- Tabs -->
+<div class="flex border-b border-[#2a2a2a] bg-[#1a1a1c]">
+<button class="px-6 py-4 text-sm font-medium text-brand-pink border-b-2 border-brand-pink bg-brand-pink/5">链接</button>
+<button class="px-6 py-4 text-sm font-medium text-slate-500 hover:text-slate-300">文本</button>
+<button class="px-6 py-4 text-sm font-medium text-slate-500 hover:text-slate-300">上传</button>
+<button class="px-6 py-4 text-sm font-medium text-slate-500 hover:text-slate-300">探索</button>
+</div>
+<!-- Input Area -->
+<div class="p-6">
+<textarea class="w-full h-32 bg-transparent border-none focus:ring-0 text-white placeholder-slate-600 resize-none font-body-md" placeholder="粘贴文章链接，支持批量输入..."></textarea>
+</div>
+<!-- Footer Actions -->
+<div class="px-6 py-4 border-t border-[#2a2a2a] flex items-center justify-between">
+<div class="flex gap-4">
+<button class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+<i data-lucide="sliders-horizontal" style="width:16px;height:16px;"></i>
+<span>生成设置</span>
+</button>
+<button class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+<i data-lucide="bot" style="width:16px;height:16px;"></i>
+<span>默认模型</span>
+</button>
+</div>
+<button class="text-xs text-slate-500 hover:text-slate-300 transition-colors">
+                        快速粘贴
+                    </button>
+</div>
+</div>
+<!-- Quick Experience -->
+<div class="flex items-center justify-center gap-3">
+<span class="text-xs text-slate-600 font-body-sm">快速体验：</span>
+<a class="px-3 py-1.5 bg-[#1a1a1c] border border-white/5 rounded-full text-xs text-slate-400 hover:text-white transition-all" href="#">
+                    科技周刊：AI 时代的数字生活
+                </a>
+<a class="px-3 py-1.5 bg-[#1a1a1c] border border-white/5 rounded-full text-xs text-slate-400 hover:text-white transition-all" href="#">
+                    深度：播客如何重塑我们的听觉
+                </a>
+</div>
+<!-- Primary CTA -->
+<div class="flex flex-col items-center gap-6 pt-sm">
+<button class="group relative flex items-center gap-3 px-12 py-4 bg-white hover:bg-white/90 text-black rounded-full font-bold text-lg transition-all transform active:scale-95 shadow-[0_0_40px_rgba(255,255,255,0.1)]">
+<i data-lucide="sparkles" style="width:20px;height:20px;"></i>
+<span>一键生成</span>
+</button>
+<div class="flex items-center gap-8">
+<a class="text-xs text-slate-500 hover:text-brand-pink transition-colors underline underline-offset-4" href="#">热门内容</a>
+<a class="text-xs text-slate-500 hover:text-brand-pink transition-colors underline underline-offset-4" href="#">批量生成</a>
+</div>
+</div>
+<!-- Feature Showcase Bento -->
+<div class="grid grid-cols-2 gap-4 mt-xl">
+<div class="p-6 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
+<div class="h-10 w-10 rounded-xl bg-brand-pink/10 flex items-center justify-center">
+<i data-lucide="users" class="text-brand-pink"></i>
+</div>
+<h4 class="text-white font-semibold text-sm">拟人化双人对谈</h4>
+<p class="text-xs text-slate-500 leading-relaxed font-body-sm">AI 自动识别文章核心观点，模拟主持人与嘉宾的多维度深度对谈，告别单一朗读。</p>
+</div>
+<div class="p-6 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
+<div class="h-10 w-10 rounded-xl bg-tertiary/10 flex items-center justify-center">
+<i data-lucide="audio-lines" class="text-tertiary"></i>
+</div>
+<h4 class="text-white font-semibold text-sm">高品质音色还原</h4>
+<p class="text-xs text-slate-500 leading-relaxed font-body-sm">自研音频增强引擎，提供自然的情绪起伏与呼吸感，带来身临其境的听觉体验。</p>
+</div>
+</div>
+</div>
+<!-- Footer -->
+<footer class="absolute bottom-10 text-center w-full">
+<p class="text-[10px] text-slate-700 font-mono-data tracking-widest uppercase">
+                Earline v2.0.4 — The Luminescent Guide
+            </p>
+</footer>
+</main>
+<!-- Visual Anchor Background Elements -->
+<div class="fixed top-0 left-0 w-full h-full -z-10 bg-[#0c0c0e]">
+<img class="w-full h-full object-cover opacity-10 mix-blend-overlay" data-alt="A sophisticated abstract background featuring fluid, ethereal waves of dark carbon and deep black hues. Subtle gradients of coral pink and sky blue light emerge from the edges, creating a sense of infinite digital depth. The lighting is low-key and futuristic, emphasizing a premium glassmorphism aesthetic with high contrast and smooth, flowing geometry. The atmosphere is serene, professional, and technologically advanced." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAYK6Xc8-IA9RZtzvJYw1qUbZLSQXbuWDAh3kLKI7_oi-Cxfs9iRP56kdDMWJR6YbR-FtpbL9T93luGAuv2vqsCECZOPw7pkEywU8bdx4Hk6BW1JIvWPJ0I1zQgVOvnw9R5KI_nc6TsX3MG0GFbLjV60bMTxocZLELBRrl3wvgjMjmui1S01wBlhmo7uQdKghF7jALpLzVXYL4DZLxMVBoXWsTmAPTOaKX-AUSM8TOBGFmwgyyndt0vvyEI8N84S5pxBEeXg6NCvryg"/>
+</div>
+<script>lucide.createIcons();</script>
+</body></html>

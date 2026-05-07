@@ -1,0 +1,92 @@
+ * Serving Flask app 'app'
+ * Debug mode: off
+2026-05-04 18:47:06,399 [INFO] [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5003
+ * Running on http://192.168.2.236:5003
+2026-05-04 18:47:06,399 [INFO] [33mPress CTRL+C to quit[0m
+2026-05-04 18:47:52,028 [INFO] 127.0.0.1 - - [04/May/2026 18:47:52] "[31m[1mPOST /api/subscriptions HTTP/1.1[0m" 400 -
+2026-05-04 18:48:00,948 [INFO] 127.0.0.1 - - [04/May/2026 18:48:00] "[35m[1mPOST /api/subscriptions HTTP/1.1[0m" 201 -
+2026-05-04 18:48:42,920 [INFO] 127.0.0.1 - - [04/May/2026 18:48:42] "PUT /api/subscriptions/3f886139-e005-4e7a-8d22-9a38bb91e491 HTTP/1.1" 200 -
+2026-05-04 18:48:46,053 [INFO] Opening generated (3108ms): Ð¡½ª£ºÏëÏóÒ»ÏÂ£¬ÄãÔÚÃ¦ÂµµÄ¿§·È¹ÝÀï£¬Í»È»Ìýµ½Ò»¸öÊìÏ¤È´ÓÖÄ°ÉúµÄÃû×ÖÔÚ¶ú±ßÏìÆð¡£  
+Ð¡Ñò£ºÕâ¸ö»­ÃæÕæÎüÒýÈË£¬Ãû×ÖÓÐÊ±ºòÄÜÖØËÜÎÒÃÇµÄÉí·ÝºÍ¸Ð¾õ£¬ÈÃÎÒÃÇÌ½Ë÷¸üÉî²ã´ÎµÄ×ÔÎÒ¡£
+2026-05-04 18:48:46,055 [INFO] [bg] Starting full generation for session 8e70d804-6a23-4f41-855f-c003621e96b0
+2026-05-04 18:48:46,055 [INFO] Fetching: https://example.com/article
+2026-05-04 18:48:46,056 [INFO] Subscription 3f886139-e005-4e7a-8d22-9a38bb91e491 (Updated Name) queued as session 8e70d804-6a23-4f41-855f-c003621e96b0
+2026-05-04 18:48:46,056 [INFO] 127.0.0.1 - - [04/May/2026 18:48:46] "POST /api/subscriptions/generate HTTP/1.1" 200 -
+2026-05-04 18:48:46,527 [ERROR] [bg] Full generation failed: HTTP 404
+Traceback (most recent call last):
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\app.py", line 239, in fetch_article
+    resp.raise_for_status()
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python312\Lib\site-packages\requests\models.py", line 1028, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 404 Client Error: Not Found for url: https://example.com/article
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\app.py", line 458, in _background_full_generation
+    title, body = fetch_article(url)
+                  ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\app.py", line 245, in fetch_article
+    raise ValueError(f"HTTP {e.response.status_code}" if e.response.status_code != 403 else "Ä¿±êÍøÕ¾¾Ü¾ø·ÃÎÊ")
+ValueError: HTTP 404
+2026-05-04 18:49:41,555 [INFO] 127.0.0.1 - - [04/May/2026 18:49:41] "GET /api/generation_status/8e70d804-6a23-4f41-855f-c003621e96b0 HTTP/1.1" 200 -
+2026-05-04 18:49:58,505 [INFO] 127.0.0.1 - - [04/May/2026 18:49:58] "[35m[1mPOST /api/notes HTTP/1.1[0m" 201 -
+2026-05-04 18:49:58,524 [INFO] 127.0.0.1 - - [04/May/2026 18:49:58] "PUT /api/notes/f12031d6-2eb2-40b6-bbb2-39d283276395 HTTP/1.1" 200 -
+2026-05-04 19:10:58,660 [ERROR] Recommend add failed: <ConnectionConfigException: (code=1, message=milvus-lite is required for local database connections. Please install it with: pip install pymilvus[milvus_lite])>
+Traceback (most recent call last):
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python312\Lib\site-packages\pymilvus\client\connection_manager.py", line 102, in from_uri
+    from milvus_lite.server_manager import (  # noqa: PLC0415
+ModuleNotFoundError: No module named 'milvus_lite'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\app.py", line 1143, in api_recommend_add
+    kb = _get_kb()
+         ^^^^^^^^^
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\app.py", line 1114, in _get_kb
+    return init_knowledge_base()
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\rag\__init__.py", line 23, in init_knowledge_base
+    kb = KnowledgeBase(DATA_DIR)
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\rag\knowledge_base.py", line 45, in __init__
+    self._client = MilvusClient(str(self.data_dir / self.MILVUS_DB))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python312\Lib\site-packages\pymilvus\milvus_client\milvus_client.py", line 81, in __init__
+    self._config = ConnectionConfig.from_uri(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python312\Lib\site-packages\pymilvus\client\connection_manager.py", line 106, in from_uri
+    raise ConnectionConfigException(
+pymilvus.exceptions.ConnectionConfigException: <ConnectionConfigException: (code=1, message=milvus-lite is required for local database connections. Please install it with: pip install pymilvus[milvus_lite])>
+2026-05-04 19:10:58,660 [ERROR] Recommend failed: <ConnectionConfigException: (code=1, message=milvus-lite is required for local database connections. Please install it with: pip install pymilvus[milvus_lite])>
+Traceback (most recent call last):
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python312\Lib\site-packages\pymilvus\client\connection_manager.py", line 102, in from_uri
+    from milvus_lite.server_manager import (  # noqa: PLC0415
+ModuleNotFoundError: No module named 'milvus_lite'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\app.py", line 1125, in api_recommend
+    kb = _get_kb()
+         ^^^^^^^^^
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\app.py", line 1114, in _get_kb
+    return init_knowledge_base()
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\rag\__init__.py", line 23, in init_knowledge_base
+    kb = KnowledgeBase(DATA_DIR)
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\Desktop\Drivio\erxing\backend\rag\knowledge_base.py", line 45, in __init__
+    self._client = MilvusClient(str(self.data_dir / self.MILVUS_DB))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python312\Lib\site-packages\pymilvus\milvus_client\milvus_client.py", line 81, in __init__
+    self._config = ConnectionConfig.from_uri(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python312\Lib\site-packages\pymilvus\client\connection_manager.py", line 106, in from_uri
+    raise ConnectionConfigException(
+pymilvus.exceptions.ConnectionConfigException: <ConnectionConfigException: (code=1, message=milvus-lite is required for local database connections. Please install it with: pip install pymilvus[milvus_lite])>
+2026-05-04 19:10:58,687 [INFO] 127.0.0.1 - - [04/May/2026 19:10:58] "[35m[1mPOST /api/recommend/add HTTP/1.1[0m" 500 -
+2026-05-04 19:10:58,688 [INFO] 127.0.0.1 - - [04/May/2026 19:10:58] "[35m[1mPOST /api/recommend HTTP/1.1[0m" 500 -

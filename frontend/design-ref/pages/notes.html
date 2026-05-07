@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html class="dark" lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+    body { font-family: 'Space Grotesk', -apple-system, 'PingFang SC', sans-serif; background-color: #0c0c0e; color: #f5dddb; margin: 0; }
+    i[data-lucide] { display: inline-block; vertical-align: middle; width: 18px; height: 18px; stroke-width: 2; }
+</style>
+<script>
+    tailwind.config = {
+        darkMode: "class",
+        theme: {
+            extend: {
+                colors: {
+                    "bg-main": "#0c0c0e", "bg-sidebar": "#1a1a1a", "bg-card": "#161618",
+                    "border-default": "#2a2a2a", "brand-pink": "#ec4899", "brand-tertiary": "#52dea2"
+                }
+            }
+        }
+    };
+</script>
+</head>
+<body class="flex min-h-screen">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-0 h-full w-[240px] bg-[#1a1a1a] border-r border-[#2a2a2a] flex flex-col z-50">
+<div class="p-6">
+<h2 class="text-xs font-medium text-slate-500 mb-6">欢迎 耳行 新用户!</h2>
+<div class="flex items-center gap-3 mb-8">
+<span class="text-2xl font-black text-brand-pink">耳行</span>
+<span class="bg-brand-pink/10 text-brand-pink text-[10px] px-2 py-0.5 rounded-full font-bold">PRO</span>
+</div>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./web.html">
+<i data-lucide="sparkles"></i><span>新播客</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./search.html">
+<i data-lucide="search"></i><span>全局搜索</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./my-podcasts.html">
+<i data-lucide="library"></i><span class="flex-1">我的播客</span><span class="text-[10px] text-slate-500">(3)</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="headphones"></i><span>产出物</span>
+</a>
+</nav>
+<div class="mt-8">
+<h3 class="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">探索</h3>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./subscriptions.html">
+<i data-lucide="rss"></i><span>订阅</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./hot.html">
+<i data-lucide="flame"></i><span>热门</span>
+</a>
+</nav>
+</div>
+</div>
+<div class="mt-auto p-4 border-t border-[#2a2a2a]">
+<button class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all">
+<i data-lucide="log-in"></i><span>注册 / 登录</span>
+</button>
+</div>
+</aside>
+
+<!-- Main Content -->
+<main class="ml-[240px] flex-1 p-10">
+<div class="max-w-3xl mx-auto">
+<h1 class="text-2xl font-bold text-white mb-2">笔记</h1>
+<p class="text-sm text-slate-500 mb-6">记录播客中的灵感与思考</p>
+
+<!-- Add Note Input -->
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-4 mb-6 accent-glow">
+<input type="text" placeholder="笔记标题（选填）" class="w-full bg-transparent text-sm text-white placeholder-slate-600 outline-none mb-3 font-semibold"/>
+<textarea placeholder="写笔记…" class="w-full bg-transparent text-sm text-white placeholder-slate-600 outline-none resize-none h-20 leading-relaxed"></textarea>
+<div class="flex items-center justify-between pt-3 border-t border-[#2a2a2a] mt-3">
+<div class="text-xs text-slate-500">关联播客：AI 时代的数字生活变革</div>
+<button class="px-4 py-2 bg-white text-black rounded-xl text-xs font-bold hover:bg-white/90 transition-all">保存</button>
+</div>
+</div>
+
+<!-- Notes List -->
+<div class="space-y-3">
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5 hover:border-white/10 transition-all group">
+<div class="flex items-start justify-between mb-2">
+<h3 class="text-sm font-semibold text-white">AI 教育的关键论点</h3>
+<button class="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-red-400 transition-all opacity-0 group-hover:opacity-100">
+<i data-lucide="trash-2" style="width:14px;height:14px"></i>
+</button>
+</div>
+<p class="text-sm text-slate-400 leading-relaxed mb-3">作者提到的"个性化学习"概念很有意思，但隐私问题也不容忽视。需要在产品设计中平衡这两者。</p>
+<div class="flex items-center gap-3 text-xs text-slate-500">
+<span>来自：AI 时代的数字生活变革</span>
+<span>·</span>
+<span>3 天前</span>
+</div>
+</div>
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5 hover:border-white/10 transition-all group">
+<div class="flex items-start justify-between mb-2">
+<h3 class="text-sm font-semibold text-white">FSD 入华的时间线</h3>
+<button class="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-red-400 transition-all opacity-0 group-hover:opacity-100">
+<i data-lucide="trash-2" style="width:14px;height:14px"></i>
+</button>
+</div>
+<p class="text-sm text-slate-400 leading-relaxed mb-3">2024年4月宣布，2026年Q1正式落地。本土企业的反应速度会决定市场格局。</p>
+<div class="flex items-center gap-3 text-xs text-slate-500">
+<span>来自：特斯拉 FSD 入华</span>
+<span>·</span>
+<span>1 周前</span>
+</div>
+</div>
+</div>
+
+<!-- Empty State (hidden) -->
+<div class="hidden flex flex-col items-center justify-center py-24 text-center">
+<div class="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
+<i data-lucide="pen-line" class="text-slate-600" style="width:28px;height:28px"></i>
+</div>
+<h3 class="text-white font-semibold mb-1">还没有笔记</h3>
+<p class="text-sm text-slate-500 mb-6">在播放器中记录灵感，或在这里直接创建笔记</p>
+</div>
+</div>
+</main>
+<script>lucide.createIcons();</script>
+</body>
+</html>

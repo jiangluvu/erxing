@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html class="dark" lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+    body { font-family: 'Space Grotesk', -apple-system, 'PingFang SC', sans-serif; background-color: #0c0c0e; color: #f5dddb; margin: 0; }
+    i[data-lucide] { display: inline-block; vertical-align: middle; width: 18px; height: 18px; stroke-width: 2; }
+</style>
+<script>
+    tailwind.config = {
+        darkMode: "class",
+        theme: {
+            extend: {
+                colors: {
+                    "bg-main": "#0c0c0e", "bg-sidebar": "#1a1a1a", "bg-card": "#161618",
+                    "border-default": "#2a2a2a", "brand-pink": "#ec4899", "brand-tertiary": "#52dea2"
+                }
+            }
+        }
+    };
+</script>
+</head>
+<body class="flex min-h-screen">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-0 h-full w-[240px] bg-[#1a1a1a] border-r border-[#2a2a2a] flex flex-col z-50">
+<div class="p-6">
+<h2 class="text-xs font-medium text-slate-500 mb-6">欢迎 耳行 新用户!</h2>
+<div class="flex items-center gap-3 mb-8">
+<span class="text-2xl font-black text-brand-pink">耳行</span>
+<span class="bg-brand-pink/10 text-brand-pink text-[10px] px-2 py-0.5 rounded-full font-bold">PRO</span>
+</div>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./web.html">
+<i data-lucide="sparkles"></i><span>新播客</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="search"></i><span>全局搜索</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./my-podcasts.html">
+<i data-lucide="library"></i><span class="flex-1">我的播客</span><span class="text-[10px] text-slate-500">(3)</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="headphones"></i><span>产出物</span>
+</a>
+</nav>
+<div class="mt-8">
+<h3 class="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">探索</h3>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./subscriptions.html">
+<i data-lucide="rss"></i><span>订阅</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="flame"></i><span>热门</span>
+</a>
+</nav>
+</div>
+</div>
+<div class="mt-auto p-4 border-t border-[#2a2a2a]">
+<button class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all">
+<i data-lucide="log-in"></i><span>注册 / 登录</span>
+</button>
+</div>
+</aside>
+
+<!-- Main Content -->
+<main class="ml-[240px] flex-1 p-10">
+<div class="max-w-3xl mx-auto">
+<div class="mb-8">
+<div class="flex items-center gap-2 mb-3">
+<a href="./my-podcasts.html" class="text-xs text-slate-500 hover:text-white transition-colors flex items-center gap-1">
+<i data-lucide="arrow-left" style="width:14px;height:14px"></i> 我的播客
+</a>
+</div>
+<h1 class="text-2xl font-bold text-white mb-2">AI 时代的数字生活变革</h1>
+<div class="flex items-center gap-3 text-xs text-slate-500">
+<span class="flex items-center gap-1"><i data-lucide="newspaper" style="width:12px;height:12px"></i> 公众号</span>
+<span>·</span>
+<span>12:34</span>
+<span>·</span>
+<span>生成于 2 小时前</span>
+</div>
+</div>
+
+<!-- Source Card -->
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5 mb-6 flex items-start gap-4">
+<div class="w-10 h-10 rounded-xl bg-brand-pink/10 flex items-center justify-center flex-shrink-0">
+<i data-lucide="link" class="text-brand-pink" style="width:18px;height:18px"></i>
+</div>
+<div class="flex-1 min-w-0">
+<div class="text-sm font-semibold text-white mb-0.5">来源文章</div>
+<a href="#" class="text-xs text-brand-pink hover:underline truncate block">https://mp.weixin.qq.com/s/xxxxx</a>
+</div>
+<button class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-slate-400 hover:text-white transition-all border border-white/5 flex-shrink-0">
+访问原文
+</button>
+</div>
+
+<!-- Summary -->
+<div class="mb-8">
+<h2 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+<i data-lucide="file-text" style="width:16px;height:16px" class="text-brand-pink"></i>
+播客摘要
+</h2>
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5">
+<p class="text-sm text-slate-300 leading-relaxed">
+                小羊和小姜围绕《AI 时代的数字生活变革》一文展开了深入对谈。文章核心观点是：人工智能正在从工具属性进化为生活伴侣，未来的数字生活将呈现"千人千面"的个性化特征。两位主持人从教育、医疗、出行三个维度分析了 AI 带来的变革，并探讨了潜在的隐私风险与信息茧房问题。最后，他们就如何在享受技术便利的同时保持批判性思维给出了建议。
+            </p>
+</div>
+</div>
+
+<!-- Chapters -->
+<div class="mb-8">
+<h2 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+<i data-lucide="list" style="width:16px;height:16px" class="text-brand-pink"></i>
+章节大纲
+</h2>
+<div class="space-y-2">
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-xl p-4 flex items-start gap-3 hover:border-white/10 transition-all cursor-pointer">
+<div class="w-8 h-8 rounded-lg bg-brand-pink/10 flex items-center justify-center flex-shrink-0 text-xs font-bold text-brand-pink">01</div>
+<div class="flex-1">
+<div class="text-sm font-medium text-white mb-0.5">核心观点导入</div>
+<div class="text-xs text-slate-500">小羊和小姜介绍了文章主题与背景，点明 AI 从工具到伴侣的进化趋势</div>
+</div>
+<div class="text-xs text-slate-600 flex-shrink-0 pt-1">00:00 - 02:15</div>
+</div>
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-xl p-4 flex items-start gap-3 hover:border-white/10 transition-all cursor-pointer">
+<div class="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center flex-shrink-0 text-xs font-bold text-slate-400">02</div>
+<div class="flex-1">
+<div class="text-sm font-medium text-white mb-0.5">深度分析：教育、医疗、出行</div>
+<div class="text-xs text-slate-500">逐维度讨论 AI 如何重塑三大核心生活场景</div>
+</div>
+<div class="text-xs text-slate-600 flex-shrink-0 pt-1">02:15 - 08:42</div>
+</div>
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-xl p-4 flex items-start gap-3 hover:border-white/10 transition-all cursor-pointer">
+<div class="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center flex-shrink-0 text-xs font-bold text-slate-400">03</div>
+<div class="flex-1">
+<div class="text-sm font-medium text-white mb-0.5">风险与反思</div>
+<div class="text-xs text-slate-500">探讨隐私安全、信息茧房与技术依赖等潜在问题</div>
+</div>
+<div class="text-xs text-slate-600 flex-shrink-0 pt-1">08:42 - 10:30</div>
+</div>
+<div class="bg-[#161618] border border-[#2a2a2a] rounded-xl p-4 flex items-start gap-3 hover:border-white/10 transition-all cursor-pointer">
+<div class="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center flex-shrink-0 text-xs font-bold text-slate-400">04</div>
+<div class="flex-1">
+<div class="text-sm font-medium text-white mb-0.5">总结与思考</div>
+<div class="text-xs text-slate-500">回顾关键 takeaways，给出保持批判性思维的建议</div>
+</div>
+<div class="text-xs text-slate-600 flex-shrink-0 pt-1">10:30 - 12:34</div>
+</div>
+</div>
+</div>
+
+<!-- Actions -->
+<div class="flex items-center gap-3">
+<button class="flex items-center gap-2 px-5 py-2.5 bg-white text-black rounded-xl text-sm font-bold hover:bg-white/90 transition-all">
+<i data-lucide="play" style="width:16px;height:16px"></i>
+收听播客
+</button>
+<button class="flex items-center gap-2 px-5 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all border border-white/5">
+<i data-lucide="heart" style="width:16px;height:16px"></i>
+收藏
+</button>
+<button class="flex items-center gap-2 px-5 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all border border-white/5">
+<i data-lucide="download" style="width:16px;height:16px"></i>
+下载音频
+</button>
+<button class="flex items-center gap-2 px-5 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all border border-white/5">
+<i data-lucide="share-2" style="width:16px;height:16px"></i>
+分享
+</button>
+</div>
+</div>
+</main>
+<script>lucide.createIcons();</script>
+</body>
+</html>

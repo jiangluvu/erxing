@@ -10,8 +10,6 @@ from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import anthropic
-import edge_tts
-
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
@@ -282,6 +280,7 @@ def _concat_mp3(segments: list[str], out_path: str) -> str:
     return str(out_path)
 
 async def _tts_one(text: str, voice: str, path: str):
+    import edge_tts
     await edge_tts.Communicate(text, voice).save(path)
 
 def tts_script(script: list[dict]) -> str:
@@ -316,6 +315,40 @@ SESSION_CLEANUP_INTERVAL = 300  # 5 minutes
 
 _sessions: dict[str, dict] = {}
 _session_lock = threading.Lock()
+
+SESSIONS_PATH = BASE_DIR / "sessions.json"
+
+# ── Session Persistence (survives restarts) ──
+
+def _persist_sessions():
+    """Save all sessions to disk (excluding temp audio paths)."""
+    with _session_lock:
+        snapshot = {}
+        for sid, s in _sessions.items():
+            snapshot[sid] = {
+                k: v for k, v in s.items()
+                if k not in ("opening_audio_path", "full_audio_path")
+            }
+    try:
+        with open(SESSIONS_PATH, "w", encoding="utf-8") as f:
+            json.dump(snapshot, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to persist sessions: {e}")
+
+def _load_persisted_sessions():
+    """Load sessions from disk at startup."""
+    global _sessions
+    if not SESSIONS_PATH.exists():
+        return
+    try:
+        with open(SESSIONS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            with _session_lock:
+                _sessions = data
+            logger.info(f"Loaded {len(data)} persisted sessions")
+    except Exception as e:
+        logger.warning(f"Failed to load persisted sessions: {e}")
 
 OPENING_SYSTEM = """你是一个播客开场白编剧。根据给定的话题，生成一段双人播客的精彩开场。
 
@@ -363,6 +396,7 @@ def _session_create(session_id: str, request_id: str, duration: str, title: str)
             "eval_scores": None,
         }
         _sessions[session_id] = session
+        _persist_sessions()
         return session
 
 
@@ -394,6 +428,33 @@ def generate_opening(topic: str) -> list[dict]:
             {"speaker": "小羊", "text": "还真没仔细了解，你给说说？"},
         ]
     return dialogue[:2]
+
+
+def _start_generation(url: str, text: str, duration: str, title: str | None = None, request_id: str | None = None) -> tuple[str, list[dict]]:
+    """Create session, generate opening script, and start background thread.
+    Returns (session_id, opening_script)."""
+    if not request_id:
+        request_id = str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
+
+    if not title:
+        title = _quick_title(url) if url else text[:80].strip() if text else "未知话题"
+    if not title:
+        title = "未知话题"
+
+    _session_create(session_id, request_id, duration, title)
+
+    opening_script = generate_opening(title)
+    _session_set(session_id, "opening_script", opening_script)
+    _session_set(session_id, "progress", 30)
+
+    thread = threading.Thread(
+        target=_background_full_generation,
+        args=(session_id, url, text, duration, opening_script),
+        daemon=True,
+    )
+    thread.start()
+    return session_id, opening_script
 
 
 def _tts_script_segment(script: list[dict], tag: str = "seg") -> str:
@@ -438,6 +499,18 @@ def _background_full_generation(session_id: str, url: str, text: str,
         _session_set(session_id, "parse_time_ms", parse_ms)
         _session_set(session_id, "status", "generating_full")
         _session_set(session_id, "progress", 30)
+
+        # Store URL and platform
+        if url:
+            _session_set(session_id, "url", url)
+            if "bilibili" in url or "b23.tv" in url:
+                _session_set(session_id, "platform", "B站")
+            elif "zhihu" in url:
+                _session_set(session_id, "platform", "知乎")
+            elif "weixin" in url or "mp.weixin" in url:
+                _session_set(session_id, "platform", "公众号")
+            else:
+                _session_set(session_id, "platform", "网页")
 
         # STEP1: key points
         t1 = time.time()
@@ -489,11 +562,22 @@ def _background_full_generation(session_id: str, url: str, text: str,
         _session_set(session_id, "progress", 100)
         logger.info(f"[bg] Full generation complete for session {session_id}")
 
+        # Auto-add to knowledge base for recommendations (best-effort)
+        try:
+            kb = _get_kb()
+            if kb and title and clean_text:
+                kb.add(title=title, content=clean_text, url=url, summary=title)
+                logger.info(f"[bg] Article added to knowledge base for session {session_id}")
+        except Exception as e:
+            logger.warning(f"[bg] Failed to add article to KB: {e}")
+
     except Exception as e:
         logger.error(f"[bg] Full generation failed: {e}", exc_info=True)
         _session_set(session_id, "status", "failed")
         _session_set(session_id, "error", str(e)[:200])
         _session_set(session_id, "progress", 0)
+    finally:
+        _persist_sessions()
 
 
 def _session_cleanup_loop():
@@ -533,16 +617,7 @@ def api_generate_streaming():
         return jsonify({"error": "服务端未配置 API 密钥"}), 500
 
     try:
-        # Quick title extraction
-        title = _quick_title(url) if url else text[:80].strip()
-        if not title:
-            title = "未知话题"
-        _session_create(session_id, request_id, duration, title)
-
-        # Generate opening from title only (~5s)
-        opening_script = generate_opening(title)
-        _session_set(session_id, "opening_script", opening_script)
-        _session_set(session_id, "progress", 30)
+        session_id, opening_script = _start_generation(url, text, duration, request_id=request_id)
 
         # TTS opening (~2s)
         opening_audio_path = _tts_script_segment(opening_script, f"opening_{session_id[:8]}")
@@ -552,14 +627,6 @@ def api_generate_streaming():
 
         ttfa_ms = int((time.time() - t0) * 1000)
         logger.info(f"TTFA: {ttfa_ms}ms for session {session_id}")
-
-        # Background full generation
-        thread = threading.Thread(
-            target=_background_full_generation,
-            args=(session_id, url, text, duration, opening_script),
-            daemon=True,
-        )
-        thread.start()
 
         # Return opening audio immediately
         resp = send_file(opening_audio_path, mimetype="audio/mpeg", as_attachment=True,
@@ -801,7 +868,318 @@ def index():
 def frontend_assets(path):
     return send_from_directory(FRONTEND_DIR / "assets", path)
 
-# ── RAG Recommendation ──
+# ── Explore API (curated content + chapters) ──
+
+EXPLORE_ARTICLES = [
+    {"id":"exp_1","title":"AI 时代的教育变革：为什么我们需要重新定义学习","desc":"深度探讨了 AI 对教育体系的影响","tag":"精选","platform":"公众号","icon":"📄","gradient":"linear-gradient(135deg,#FF6B6B15,#5E9EFF15)",
+     "summary":"小羊和小姜从各自的角度探讨了 AI 对传统教育体系的冲击。小姜用自己孩子学校的例子说明课堂已经在变化，小羊则从更宏观的视角分析了教育理念需要如何转变。",
+     "chapters":[{"t":"01 · 教育的困境","d":"AI 时代的到来让传统教育模式面临前所未有的挑战"},{"t":"02 · 重新定义学习","d":"从知识灌输到能力培养，学习方式的根本转变"},{"t":"03 · 实践建议","d":"如何在 AI 时代重新规划学习路径"}]},
+    {"id":"exp_2","title":"2026 年新能源汽车市场趋势：价格战后的新格局","desc":"分析新能源汽车市场的竞争格局变化","tag":"精选","platform":"知乎","icon":"📝","gradient":"linear-gradient(135deg,#FF9F5E15,#FF6B6B15)",
+     'summary':'小姜开篇就抛出了「价格战打完了，然后呢」的疑问。小羊用数据分析了各品牌的生存状况，两人一致认为技术差异化和海外市场是下一阶段的关键。',
+     "chapters":[{"t":"01 · 市场回顾","d":"2025 年价格战后的市场格局重塑"},{"t":"02 · 品牌分析","d":"各主要品牌的战略定位和差异化"},{"t":"03 · 未来预测","d":"2026-2027 年的关键趋势和变量"}]},
+    {"id":"exp_3","title":"为什么日本半导体产业在过去三十年衰落又崛起？","desc":"日本半导体产业从崛起到衰落再到复兴","tag":"精选","platform":"网页","icon":"🌐","gradient":"linear-gradient(135deg,#5E9EFF15,#34C75915)",
+     "summary":"小羊从历史角度梳理了日本半导体产业的完整发展脉络。小姜则从当下供应链的角度分析了日本在材料领域的不可替代性。",
+     "chapters":[{"t":"01 · 辉煌时期","d":"日本半导体在上世纪 80 年代的全球主导地位"},{"t":"02 · 衰落原因","d":"日美贸易摩擦和产业策略失误"},{"t":"03 · 复兴之路","d":"当前日本在半导体材料领域的重新崛起"}]},
+    {"id":"exp_4","title":"特斯拉 FSD 入华：自动驾驶的新篇章","desc":"FSD 正式进入中国，对本土企业产生的影响","tag":"热门","platform":"B站","icon":"▶️","gradient":"linear-gradient(135deg,#34C75915,#5E9EFF15)",
+     "summary":"小姜试驾了搭载 FSD 的车型后兴奋地分享了体验。小羊则冷静分析了特斯拉的技术路线和本土化挑战。",
+     "chapters":[{"t":"01 · 入华背景","d":"FSD 获批进入中国市场的来龙去脉"},{"t":"02 · 技术对比","d":"特斯拉 vs 华为小鹏的自动驾驶路线差异"},{"t":"03 · 行业影响","d":"FSD 入华对本土企业的竞争压力"}]},
+    {"id":"exp_5","title":"SpaceX 星舰第五飞：人类登陆火星的里程碑","desc":"筷子回收技术取得历史性突破","tag":"热门","platform":"B站","icon":"▶️","gradient":"linear-gradient(135deg,#764BA215,#FF6B6B15)",
+     "summary":"小姜一上来就说“太震撼了”，描述了亲眼看到筷子捕获助推器的画面。小羊用通俗的比喻解释了这项技术突破的意义。",
+     "chapters":[{"t":"01 · 任务回顾","d":"星舰第五次轨道测试的关键节点"},{"t":"02 · 筷子技术","d":"发射塔捕获助推器的工程技术突破"},{"t":"03 · 火星展望","d":"完全可重复使用火箭对太空探索的意义"}]},
+    {"id":"exp_6","title":"DeepSeek 崛起：中国 AI 大模型的新格局","desc":"开源策略和高效训练方法引发行业关注","tag":"精选","platform":"公众号","icon":"📄","gradient":"linear-gradient(135deg,#FF6B6B15,#764BA215)",
+     "summary":"小姜用“性价比之王”来形容 DeepSeek。小羊分析了 DeepSeek 的技术路线和开源策略对行业的影响。",
+     "chapters":[{"t":"01 · 技术突破","d":"DeepSeek 高效训练方法的技术创新"},{"t":"02 · 开源策略","d":"开源对 AI 行业竞争格局的影响"},{"t":"03 · 未来展望","d":"算法创新能否持续弥补算力差距"}]},
+    {"id":"exp_7","title":"小米 SU7 上市三个月：真实用户体验","desc":"小米首款汽车 SU7 首批用户真实反馈","tag":"精选","platform":"小红书","icon":"📱","gradient":"linear-gradient(135deg,#FF6B6B15,#FFD70015)",
+     "summary":"小姜分享了朋友提车后的真实体验。小羊从产品定义和造车基本功两个维度进行了分析。",
+     "chapters":[{"t":"01 · 智能座舱","d":"人车家全生态互联的实际体验"},{"t":"02 · 续航表现","d":"真实续航达成率和充电便利性"},{"t":"03 · 综合评价","d":"小米第一款车的得与失"}]},
+    {"id":"exp_8","title":"小红书电商崛起：从种草到拔草","desc":"小红书从内容社区到交易平台的转型","tag":"热门","platform":"小红书","icon":"📱","gradient":"linear-gradient(135deg,#FF9F5E15,#FF6B6B15)",
+     "summary":"小姜说现在买东西先看小红书。小羊分析了这种消费决策路径变化背后的商业逻辑。",
+     "chapters":[{"t":"01 · 平台转型","d":"从内容社区到交易平台的演变"},{"t":"02 · 商业模式","d":"买手直播和店铺直播双引擎"},{"t":"03 · 挑战与未来","d":"商业化 vs 社区氛围的平衡"}]},
+    {"id":"exp_9","title":"《黑神话：悟空》DLC 前瞻","desc":"游戏科学确认 DLC 正在开发中","tag":"热门","platform":"B站","icon":"▶️","gradient":"linear-gradient(135deg,#764BA215,#FF6B6B15)",
+     "summary":"小姜作为游戏迷兴奋地聊起了 DLC 的传闻。小羊则分析了这款游戏对中国游戏产业的意义。",
+     "chapters":[{"t":"01 · 全球成绩","d":"《黑神话》全球销量突破 2000 万份"},{"t":"02 · DLC 内容","d":"火焰山、狮驼岭等新场景展望"},{"t":"03 · 产业影响","d":"中国 3A 游戏的未来之路"}]},
+    {"id":"exp_10","title":"比亚迪秦 L DM-i 实测：油耗 2 升时代","desc":"第五代 DM 混动技术首款车型实测","tag":"精选","platform":"知乎","icon":"📝","gradient":"linear-gradient(135deg,#34C75915,#5E9EFF15)",
+     "summary":"小姜算了一笔账：这车一年能省多少油钱。小羊从技术角度解析了 46% 热效率发动机的含金量。",
+     "chapters":[{"t":"01 · 技术解析","d":"第五代 DM 混动技术的核心突破"},{"t":"02 · 实测数据","d":"亏电油耗 2.9L 和 2000km 续航"},{"t":"03 · 市场影响","d":"插混车型加速替代燃油车"}]},
+]
+
+# ── Notes API (JSON file storage) ──
+
+NOTES_PATH = BASE_DIR / "notes.jsonl"
+
+def _load_notes() -> list[dict]:
+    if not NOTES_PATH.exists():
+        return []
+    notes = []
+    with open(NOTES_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    notes.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    return notes
+
+def _save_notes(notes: list[dict]):
+    with open(NOTES_PATH, "w", encoding="utf-8") as f:
+        for n in notes:
+            f.write(json.dumps(n, ensure_ascii=False) + "\n")
+
+@app.route("/api/explore", methods=["GET"])
+def api_explore():
+    """Return curated explore list with chapters."""
+    platform = request.args.get("platform", "all")
+    page = int(request.args.get("page", "1"))
+    per_page = 20
+    results = EXPLORE_ARTICLES
+    if platform != "all":
+        results = [a for a in results if a["platform"] == platform]
+    total = len(results)
+    start = (page - 1) * per_page
+    end = start + per_page
+    return jsonify({
+        "articles": results[start:end],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    })
+
+@app.route("/api/podcast/<session_id>/detail", methods=["GET"])
+def api_podcast_detail(session_id: str):
+    """Return podcast detail with script, chapters, and eval scores."""
+    session = _session_get(session_id)
+    if not session:
+        return jsonify({"error": "Session not found"}), 404
+    full_script = session.get("full_script")
+    title = session.get("title", "")
+    article_title = session.get("article_title", "")
+    eval_scores = session.get("eval_scores", {})
+    # Build simple chapter structure from script topics
+    chapters = []
+    if full_script and len(full_script) > 4:
+        total_turns = len(full_script)
+        chunk_size = max(1, total_turns // 3)
+        chapter_names = [
+            ("开场与导入", "小羊和小姜引入话题"),
+            ("核心讨论", f"围绕 {title[:20]} 展开深入讨论") if title else ("核心讨论", "深入分析文章核心观点"),
+            ("总结与延伸", "回顾关键 takeaways，延伸思考"),
+        ]
+        for i, (cn, cd) in enumerate(chapter_names):
+            start_turn = i * chunk_size
+            end_turn = min((i + 1) * chunk_size, total_turns)
+            chapters.append({
+                "t": f"0{i+1} · {cn}",
+                "d": cd,
+                "turns": f"{start_turn+1}-{end_turn}",
+            })
+    return jsonify({
+        "session_id": session_id,
+        "title": title or article_title or "",
+        "status": session.get("status", ""),
+        "progress": session.get("progress", 0),
+        "script": full_script or [],
+        "chapters": chapters,
+        "eval_scores": eval_scores,
+        "duration": session.get("duration", "standard"),
+        "created_at": session.get("created_at", 0),
+    })
+
+
+@app.route("/api/podcasts", methods=["GET"])
+def api_podcasts():
+    """Return list of all completed podcasts."""
+    with _session_lock:
+        items = []
+        for sid, s in _sessions.items():
+            status = s.get("status", "")
+            if status not in ("complete", "failed"):
+                continue
+            items.append({
+                "id": sid,
+                "title": s.get("title", ""),
+                "article_title": s.get("article_title", ""),
+                "status": status,
+                "duration": s.get("duration", "standard"),
+                "created_at": s.get("created_at", 0),
+                "eval_scores": s.get("eval_scores", {}),
+                "platform": s.get("platform", "网页"),
+            })
+    items.sort(key=lambda x: x["created_at"], reverse=True)
+    return jsonify({"podcasts": items})
+
+
+@app.route("/api/notes", methods=["GET", "POST", "DELETE"])
+def api_notes():
+    if request.method == "GET":
+        session_id = request.args.get("session_id", "")
+        notes = _load_notes()
+        if session_id:
+            notes = [n for n in notes if n.get("session_id") == session_id]
+        return jsonify({"notes": notes})
+
+    elif request.method == "POST":
+        data = request.get_json(force=True) or {}
+        session_id = data.get("session_id")
+        content = data.get("content", "").strip()
+        if not session_id or not content:
+            return jsonify({"error": "需要 session_id 和 content"}), 400
+        note = {
+            "id": str(uuid.uuid4()),
+            "session_id": session_id,
+            "content": content,
+            "title": data.get("title", ""),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        notes = _load_notes()
+        notes.append(note)
+        _save_notes(notes)
+        return jsonify({"note": note}), 201
+
+    elif request.method == "DELETE":
+        note_id = request.args.get("id", "")
+        if not note_id:
+            return jsonify({"error": "需要 note id"}), 400
+        notes = _load_notes()
+        notes = [n for n in notes if n.get("id") != note_id]
+        _save_notes(notes)
+        return jsonify({"status": "deleted"})
+
+
+@app.route("/api/notes/<note_id>", methods=["PUT"])
+def api_update_note(note_id):
+    """Update an existing note."""
+    data = request.get_json(force=True) or {}
+    content = data.get("content", "").strip()
+    if not content:
+        return jsonify({"error": "content 不能为空"}), 400
+    notes = _load_notes()
+    for n in notes:
+        if n.get("id") == note_id:
+            n["content"] = content
+            n["title"] = data.get("title", n.get("title", ""))
+            n["updated_at"] = datetime.now(timezone.utc).isoformat()
+            _save_notes(notes)
+            return jsonify({"note": n})
+    return jsonify({"error": "笔记不存在"}), 404
+
+
+# ── Subscriptions API (JSON file storage) ──
+
+SUBS_PATH = BASE_DIR / "subscriptions.jsonl"
+
+def _load_subs() -> list[dict]:
+    if not SUBS_PATH.exists():
+        return []
+    subs = []
+    with open(SUBS_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    subs.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    return subs
+
+def _save_subs(subs: list[dict]):
+    with open(SUBS_PATH, "w", encoding="utf-8") as f:
+        for s in subs:
+            f.write(json.dumps(s, ensure_ascii=False) + "\n")
+
+@app.route("/api/subscriptions", methods=["GET", "POST", "DELETE"])
+def api_subscriptions():
+    if request.method == "GET":
+        return jsonify({"subscriptions": _load_subs()})
+
+    elif request.method == "POST":
+        data = request.get_json(force=True) or {}
+        url = data.get("url", "").strip()
+        name = data.get("name", "").strip()
+        platform = data.get("platform", "网页")
+        if not url:
+            return jsonify({"error": "需要订阅 URL"}), 400
+        # Get title quickly
+        if not name:
+            try:
+                resp = requests.get(url, headers=FETCH_HEADERS, timeout=5)
+                resp.raise_for_status()
+                resp.encoding = resp.apparent_encoding or "utf-8"
+                soup = BeautifulSoup(resp.text, "html.parser")
+                name = (soup.title.string if soup.title else url[:40]).strip()[:60]
+            except Exception:
+                name = url[:40]
+        sub = {
+            "id": str(uuid.uuid4()),
+            "url": url,
+            "name": name,
+            "platform": platform,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_generated": None,
+            "auto_generate": data.get("auto_generate", False),
+        }
+        subs = _load_subs()
+        # Dedup by URL
+        subs = [s for s in subs if s["url"] != url]
+        subs.append(sub)
+        _save_subs(subs)
+        return jsonify({"subscription": sub}), 201
+
+    elif request.method == "DELETE":
+        sub_id = request.args.get("id", "")
+        if not sub_id:
+            return jsonify({"error": "需要 subscription id"}), 400
+        subs = _load_subs()
+        subs = [s for s in subs if s.get("id") != sub_id]
+        _save_subs(subs)
+        return jsonify({"status": "deleted"})
+
+
+@app.route("/api/subscriptions/<sub_id>", methods=["PUT"])
+def api_update_subscription(sub_id):
+    """Update an existing subscription."""
+    data = request.get_json(force=True) or {}
+    subs = _load_subs()
+    for s in subs:
+        if s.get("id") == sub_id:
+            if "name" in data:
+                s["name"] = data["name"].strip()
+            if "url" in data:
+                s["url"] = data["url"].strip()
+            if "platform" in data:
+                s["platform"] = data["platform"].strip()
+            if "auto_generate" in data:
+                s["auto_generate"] = bool(data["auto_generate"])
+            s["updated_at"] = datetime.now(timezone.utc).isoformat()
+            _save_subs(subs)
+            return jsonify({"subscription": s})
+    return jsonify({"error": "订阅不存在"}), 404
+
+
+@app.route("/api/subscriptions/generate", methods=["POST"])
+def api_sub_generate():
+    """Trigger generation for a subscription."""
+    data = request.get_json(force=True) or {}
+    sub_id = data.get("id", "")
+    if not sub_id:
+        return jsonify({"error": "需要 subscription id"}), 400
+    subs = _load_subs()
+    sub = next((s for s in subs if s["id"] == sub_id), None)
+    if not sub:
+        return jsonify({"error": "未找到该订阅"}), 404
+    # Trigger actual generation
+    url = sub.get("url", "")
+    duration = data.get("duration", "standard")
+    try:
+        session_id, _ = _start_generation(url=url, text="", duration=duration, title=sub.get("name"))
+        # Update last_generated
+        subs = [s if s["id"] != sub_id else {**s, "last_generated": datetime.now(timezone.utc).isoformat()} for s in subs]
+        _save_subs(subs)
+        logger.info(f"Subscription {sub_id} ({sub['name']}) queued as session {session_id}")
+        return jsonify({"status": "queued", "session_id": session_id, "subscription": sub})
+    except Exception as e:
+        logger.error(f"Subscription generation failed: {e}", exc_info=True)
+        return jsonify({"error": str(e)[:200]}), 500
 
 def _get_kb():
     """Lazy-init knowledge base singleton (works with gunicorn)."""
@@ -855,18 +1233,12 @@ def api_recommend_add():
 _RAG_INIT_DONE = False
 
 def _init_rag():
+    """Skip RAG init at startup to avoid import hangs. RAG is lazy-initialized on first use."""
     global _RAG_INIT_DONE
-    if _RAG_INIT_DONE:
-        return
-    try:
-        from rag import init_knowledge_base
-        init_knowledge_base()
-        logger.info("RAG knowledge base initialized")
-        _RAG_INIT_DONE = True
-    except Exception as e:
-        logger.warning(f"RAG init failed (non-fatal): {e}")
+    _RAG_INIT_DONE = True
 
 _init_rag()
+_load_persisted_sessions()
 
 if __name__ == "__main__":
     cleanup_thread = threading.Thread(target=_session_cleanup_loop, daemon=True)

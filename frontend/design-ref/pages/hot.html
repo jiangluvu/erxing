@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html class="dark" lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+    body { font-family: 'Space Grotesk', -apple-system, 'PingFang SC', sans-serif; background-color: #0c0c0e; color: #f5dddb; margin: 0; }
+    i[data-lucide] { display: inline-block; vertical-align: middle; width: 18px; height: 18px; stroke-width: 2; }
+</style>
+<script>
+    tailwind.config = {
+        darkMode: "class",
+        theme: {
+            extend: {
+                colors: {
+                    "bg-main": "#0c0c0e", "bg-sidebar": "#1a1a1a", "bg-card": "#161618",
+                    "border-default": "#2a2a2a", "brand-pink": "#ec4899", "brand-tertiary": "#52dea2"
+                }
+            }
+        }
+    };
+</script>
+</head>
+<body class="flex min-h-screen">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-0 h-full w-[240px] bg-[#1a1a1a] border-r border-[#2a2a2a] flex flex-col z-50">
+<div class="p-6">
+<h2 class="text-xs font-medium text-slate-500 mb-6">欢迎 耳行 新用户!</h2>
+<div class="flex items-center gap-3 mb-8">
+<span class="text-2xl font-black text-brand-pink">耳行</span>
+<span class="bg-brand-pink/10 text-brand-pink text-[10px] px-2 py-0.5 rounded-full font-bold">PRO</span>
+</div>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./web.html">
+<i data-lucide="sparkles"></i><span>新播客</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./search.html">
+<i data-lucide="search"></i><span>全局搜索</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./my-podcasts.html">
+<i data-lucide="library"></i><span class="flex-1">我的播客</span><span class="text-[10px] text-slate-500">(3)</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="#">
+<i data-lucide="headphones"></i><span>产出物</span>
+</a>
+</nav>
+<div class="mt-8">
+<h3 class="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">探索</h3>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all" href="./subscriptions.html">
+<i data-lucide="rss"></i><span>订阅</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-white bg-white/5 font-medium" href="./hot.html">
+<i data-lucide="flame" class="text-brand-pink"></i><span>热门</span>
+</a>
+</nav>
+</div>
+</div>
+<div class="mt-auto p-4 border-t border-[#2a2a2a]">
+<button class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all">
+<i data-lucide="log-in"></i><span>注册 / 登录</span>
+</button>
+</div>
+</aside>
+
+<!-- Main Content -->
+<main class="ml-[240px] flex-1 p-10">
+<div class="max-w-3xl mx-auto">
+<h1 class="text-2xl font-bold text-white mb-2">热门内容</h1>
+<p class="text-sm text-slate-500 mb-6">本周最受欢迎的播客与文章</p>
+
+<!-- Filter Pills -->
+<div class="flex items-center gap-2 mb-6 flex-wrap">
+<button class="px-3 py-1.5 bg-white/5 border border-white/5 rounded-full text-xs text-white font-medium">全部</button>
+<button class="px-3 py-1.5 bg-transparent border border-white/5 rounded-full text-xs text-slate-500 hover:text-white transition-all">科技</button>
+<button class="px-3 py-1.5 bg-transparent border border-white/5 rounded-full text-xs text-slate-500 hover:text-white transition-all">商业</button>
+<button class="px-3 py-1.5 bg-transparent border border-white/5 rounded-full text-xs text-slate-500 hover:text-white transition-all">文化</button>
+<button class="px-3 py-1.5 bg-transparent border border-white/5 rounded-full text-xs text-slate-500 hover:text-white transition-all">生活方式</button>
+</div>
+
+<!-- Hot List -->
+<div class="space-y-3">
+<!-- Item 1 -->
+<div class="flex items-start gap-4 bg-[#161618] border border-[#2a2a2a] rounded-2xl p-4 hover:border-white/10 transition-all cursor-pointer">
+<div class="w-10 h-10 rounded-xl bg-brand-pink/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+<span class="text-sm font-bold text-brand-pink">1</span>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-center gap-2 mb-1">
+<h3 class="text-sm font-semibold text-white">AI 时代的教育变革：为什么我们需要重新定义学习</h3>
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-brand-pink/10 text-brand-pink border border-brand-pink/20 flex-shrink-0">精选</span>
+</div>
+<p class="text-xs text-slate-500 mb-2">深度探讨了 AI 对教育体系的影响，从个性化学习到智能评估的全面变革…</p>
+<div class="flex items-center gap-3 text-xs text-slate-500">
+<span class="flex items-center gap-1"><i data-lucide="play-circle" style="width:12px;height:12px"></i> 2.3k 收听</span>
+<span class="flex items-center gap-1"><i data-lucide="clock" style="width:12px;height:12px"></i> 12 分钟</span>
+<span>公众号</span>
+</div>
+</div>
+<button class="p-2 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-all flex-shrink-0">
+<i data-lucide="play" style="width:16px;height:16px"></i>
+</button>
+</div>
+<!-- Item 2 -->
+<div class="flex items-start gap-4 bg-[#161618] border border-[#2a2a2a] rounded-2xl p-4 hover:border-white/10 transition-all cursor-pointer">
+<div class="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0 mt-0.5">
+<span class="text-sm font-bold text-slate-400">2</span>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-center gap-2 mb-1">
+<h3 class="text-sm font-semibold text-white">2026 年新能源汽车市场趋势：价格战后的新格局</h3>
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 flex-shrink-0">热门</span>
+</div>
+<p class="text-xs text-slate-500 mb-2">分析新能源汽车市场的竞争格局变化，从价格战到技术战的转型之路…</p>
+<div class="flex items-center gap-3 text-xs text-slate-500">
+<span class="flex items-center gap-1"><i data-lucide="play-circle" style="width:12px;height:12px"></i> 1.8k 收听</span>
+<span class="flex items-center gap-1"><i data-lucide="clock" style="width:12px;height:12px"></i> 15 分钟</span>
+<span>知乎</span>
+</div>
+</div>
+<button class="p-2 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-all flex-shrink-0">
+<i data-lucide="play" style="width:16px;height:16px"></i>
+</button>
+</div>
+<!-- Item 3 -->
+<div class="flex items-start gap-4 bg-[#161618] border border-[#2a2a2a] rounded-2xl p-4 hover:border-white/10 transition-all cursor-pointer">
+<div class="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0 mt-0.5">
+<span class="text-sm font-bold text-slate-400">3</span>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-center gap-2 mb-1">
+<h3 class="text-sm font-semibold text-white">特斯拉 FSD 入华：自动驾驶的新篇章</h3>
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5 flex-shrink-0">热门</span>
+</div>
+<p class="text-xs text-slate-500 mb-2">FSD 正式进入中国，对本土企业产生的影响与竞争格局分析…</p>
+<div class="flex items-center gap-3 text-xs text-slate-500">
+<span class="flex items-center gap-1"><i data-lucide="play-circle" style="width:12px;height:12px"></i> 1.5k 收听</span>
+<span class="flex items-center gap-1"><i data-lucide="clock" style="width:12px;height:12px"></i> 10 分钟</span>
+<span>B站</span>
+</div>
+</div>
+<button class="p-2 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-all flex-shrink-0">
+<i data-lucide="play" style="width:16px;height:16px"></i>
+</button>
+</div>
+</div>
+</div>
+</main>
+<script>lucide.createIcons();</script>
+</body>
+</html>

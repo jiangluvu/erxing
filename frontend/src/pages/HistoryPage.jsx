@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { Clock, Headphones, Play, RotateCcw } from "lucide-react";
+import { Clock, Headphones, Play, RotateCcw, Trash2 } from "lucide-react";
 import { useAppStore } from "../store";
-import { getHistory, deleteHistory } from "../api";
+import { getHistory, deleteHistory, getGenerationStatus, downloadPodcast } from "../api";
 
 function formatDuration(s) {
   if (!s || isNaN(s)) return "00:00";
@@ -31,6 +31,12 @@ export default function HistoryPage() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const setPage = useAppStore((s) => s.setPage);
+  const setSessionId = useAppStore((s) => s.setSessionId);
+  const setCurrentPodcast = useAppStore((s) => s.setCurrentPodcast);
+  const setScriptData = useAppStore((s) => s.setScriptData);
+  const setTimings = useAppStore((s) => s.setTimings);
+  const setFullAudioUrl = useAppStore((s) => s.setFullAudioUrl);
+  const setPreviewAudioUrl = useAppStore((s) => s.setPreviewAudioUrl);
 
   useEffect(() => {
     getHistory()
@@ -40,6 +46,44 @@ export default function HistoryPage() {
       .catch(() => setHistory([]))
       .finally(() => setLoading(false));
   }, []);
+
+  const handleClick = async (h) => {
+    const sid = h.session_id;
+    if (!sid) return;
+    setSessionId(sid);
+    setCurrentPodcast({
+      title: sid,
+      platform: "网页",
+      time: formatRelativeTime(h.last_played_at),
+      sessionId: sid,
+    });
+    // Try to load existing session data
+    try {
+      const data = await getGenerationStatus(sid);
+      if (data.script) {
+        setScriptData(data.script);
+        let acc = 0;
+        const t = data.script.map((item) => {
+          const dur = Math.max(1.5, item.text.length / 4);
+          const start = acc;
+          acc += dur;
+          return { start, end: acc };
+        });
+        setTimings(t);
+      }
+      if (data.status === "complete") {
+        try {
+          const blob = await downloadPodcast(sid);
+          setFullAudioUrl(URL.createObjectURL(blob));
+        } catch (e) {
+          console.warn("Download failed:", e);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load session:", e);
+    }
+    setPage("player");
+  };
 
   const handleDelete = async (id) => {
     try {
@@ -78,7 +122,7 @@ export default function HistoryPage() {
                         <div
                           key={h.id}
                           className="flex items-center gap-4 bg-[#161618] border border-[#2a2a2a] rounded-2xl p-4 hover:border-white/10 transition-all cursor-pointer"
-                          onClick={() => setPage("player")}
+                          onClick={() => handleClick(h)}
                         >
                           <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0">
                             <Headphones

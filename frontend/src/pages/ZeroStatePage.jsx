@@ -6,6 +6,7 @@ import {
   Users,
   AudioLines,
   Loader2,
+  Zap,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { useGeneration } from "../hooks/useGeneration";
@@ -13,36 +14,53 @@ import { useGeneration } from "../hooks/useGeneration";
 const tabs = ["链接", "文本", "上传", "探索"];
 
 const placeholders = {
-  链接: "粘贴文章链接，支持批量输入...",
-  文本: "粘贴或输入文章内容...",
-  上传: "拖拽文件到此处，或点击上传...",
-  探索: "搜索感兴趣的主题或关键词...",
+  链接: "粘贴公众号/知乎文章链接，一键生成播客...",
+  文本: "粘贴或输入文章正文...",
+  上传: "拖拽文章文件到此处，或点击上传...",
+  探索: "搜索感兴趣的话题或关键词...",
 };
 
 export default function ZeroStatePage() {
   const [activeTab, setActiveTab] = useState("链接");
   const [inputValue, setInputValue] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [showModel, setShowModel] = useState(false);
 
   const generationStatus = useAppStore((s) => s.generationStatus);
   const generationProgress = useAppStore((s) => s.generationProgress);
   const statusText = useAppStore((s) => s.statusText);
   const setPage = useAppStore((s) => s.setPage);
+  const selectedModel = useAppStore((s) => s.selectedModel);
+  const setSelectedModel = useAppStore((s) => s.setSelectedModel);
+  const selectedDuration = useAppStore((s) => s.selectedDuration);
+  const setSelectedDuration = useAppStore((s) => s.setSelectedDuration);
+  const highQuality = useAppStore((s) => s.highQuality);
+  const setHighQuality = useAppStore((s) => s.setHighQuality);
+  const bgMusic = useAppStore((s) => s.bgMusic);
+  const setBgMusic = useAppStore((s) => s.setBgMusic);
+  const showToast = useAppStore((s) => s.showToast);
   const { startGeneration } = useGeneration();
 
   const handleGenerate = async () => {
     const trimmed = inputValue.trim();
     if (!trimmed || trimmed.length < 5) {
-      alert("请输入链接或文本");
+      showToast("请输入链接或文本", "error");
       return;
     }
     const isUrl = trimmed.startsWith("http://") || trimmed.startsWith("https://");
-    const payload = isUrl ? { url: trimmed } : { text: trimmed };
+    const payload = {
+      ...(isUrl ? { url: trimmed } : { text: trimmed }),
+      model: selectedModel,
+      duration: selectedDuration,
+      high_quality: highQuality,
+      bg_music: bgMusic,
+    };
 
     try {
       await startGeneration(payload);
       setPage("generation");
     } catch (e) {
-      alert(e.message || "生成失败");
+      showToast(e.message || "生成失败", "error");
     }
   };
 
@@ -57,14 +75,17 @@ export default function ZeroStatePage() {
         <div className="text-center space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 backdrop-blur-sm">
             <span className="text-[11px] font-bold text-slate-400 tracking-wider">
-              支持 AI 双人对话播客
+              知识创作者的 AI 播客引擎
             </span>
             <span className="h-1 w-1 rounded-full bg-brand-pink" />
             <span className="text-[10px] font-black text-brand-pink">NEW</span>
           </div>
           <h1 className="text-white font-bold tracking-tight text-3xl">
-            耳行 让每一篇文章，变成一场对谈
+            你的文章，值得被听见
           </h1>
+          <p className="text-sm text-slate-500">
+            4 小时制作 → 5 分钟完成。把深度文章自动变成双人对话播客，直接上架小宇宙。
+          </p>
         </div>
 
         {/* Input Card */}
@@ -99,11 +120,21 @@ export default function ZeroStatePage() {
           {/* Footer Actions */}
           <div className="px-6 py-4 border-t border-[#2a2a2a] flex items-center justify-between">
             <div className="flex gap-4">
-              <button className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+              <button
+                onClick={() => setShowSettings((v) => !v)}
+                className={`flex items-center gap-1.5 text-xs transition-colors ${
+                  showSettings ? "text-brand-pink" : "text-slate-500 hover:text-slate-300"
+                }`}
+              >
                 <SlidersHorizontal size={16} />
                 <span>生成设置</span>
               </button>
-              <button className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+              <button
+                onClick={() => setShowModel((v) => !v)}
+                className={`flex items-center gap-1.5 text-xs transition-colors ${
+                  showModel ? "text-brand-pink" : "text-slate-500 hover:text-slate-300"
+                }`}
+              >
                 <Bot size={16} />
                 <span>默认模型</span>
               </button>
@@ -112,6 +143,84 @@ export default function ZeroStatePage() {
               快速粘贴
             </button>
           </div>
+
+          {/* Settings Panel */}
+          {showSettings && (
+            <div className="px-6 pb-4 border-t border-[#2a2a2a] bg-[#1a1a1c]">
+              <div className="pt-4 space-y-4">
+                <div>
+                  <span className="text-xs text-slate-500 mb-2 block">时长</span>
+                  <div className="flex gap-2">
+                    {[
+                      { value: "short", label: "5 分钟" },
+                      { value: "standard", label: "10 分钟" },
+                      { value: "long", label: "15 分钟" },
+                    ].map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setSelectedDuration(opt.value)}
+                        className={`px-3 py-1.5 rounded-lg text-xs border transition-all ${
+                          selectedDuration === opt.value
+                            ? "bg-brand-pink/10 text-brand-pink border-brand-pink/20"
+                            : "bg-white/5 text-slate-400 border-white/5 hover:text-white"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={highQuality}
+                      onChange={(e) => setHighQuality(e.target.checked)}
+                      className="accent-brand-pink"
+                    />
+                    <span className="text-xs text-slate-400">高品质音频</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={bgMusic}
+                      onChange={(e) => setBgMusic(e.target.checked)}
+                      className="accent-brand-pink"
+                    />
+                    <span className="text-xs text-slate-400">背景音乐</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Model Panel */}
+          {showModel && (
+            <div className="px-6 pb-4 border-t border-[#2a2a2a] bg-[#1a1a1c]">
+              <div className="pt-4">
+                <span className="text-xs text-slate-500 mb-2 block">模型</span>
+                <div className="flex gap-2">
+                  {[
+                    { value: "kimi", label: "Kimi" },
+                    { value: "deepseek", label: "DeepSeek" },
+                    { value: "gpt4o", label: "GPT-4o" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setSelectedModel(opt.value)}
+                      className={`px-3 py-1.5 rounded-lg text-xs border transition-all ${
+                        selectedModel === opt.value
+                          ? "bg-brand-pink/10 text-brand-pink border-brand-pink/20"
+                          : "bg-white/5 text-slate-400 border-white/5 hover:text-white"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Quick Experience */}
@@ -122,20 +231,20 @@ export default function ZeroStatePage() {
             href="#"
             onClick={(e) => {
               e.preventDefault();
-              setInputValue("科技周刊：AI 时代的数字生活");
+              setInputValue("AI 时代的教育变革：为什么我们需要重新定义学习");
             }}
           >
-            科技周刊：AI 时代的数字生活
+            科技长文 → 播客
           </a>
           <a
             className="px-3 py-1.5 bg-[#1a1a1c] border border-white/5 rounded-full text-xs text-slate-400 hover:text-white transition-all"
             href="#"
             onClick={(e) => {
               e.preventDefault();
-              setInputValue("深度：播客如何重塑我们的听觉");
+              setInputValue("2026 年新能源汽车市场趋势：价格战后的新格局");
             }}
           >
-            深度：播客如何重塑我们的听觉
+            商业分析 → 播客
           </a>
         </div>
 
@@ -154,21 +263,29 @@ export default function ZeroStatePage() {
             <span>
               {generationStatus === "generating"
                 ? `${statusText} (${generationProgress}%)`
-                : "一键生成"}
+                : "开始制作播客"}
             </span>
           </button>
           <div className="flex items-center gap-8">
             <a
               className="text-xs text-slate-500 hover:text-brand-pink transition-colors underline underline-offset-4"
               href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                setPage("hot");
+              }}
             >
-              热门内容
+              创作灵感
             </a>
             <a
               className="text-xs text-slate-500 hover:text-brand-pink transition-colors underline underline-offset-4"
               href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                setPage("myPodcasts");
+              }}
             >
-              批量生成
+              我的内容
             </a>
           </div>
         </div>
@@ -180,22 +297,21 @@ export default function ZeroStatePage() {
               <Users size={20} className="text-brand-pink" />
             </div>
             <h4 className="text-white font-semibold text-sm">
-              拟人化双人对谈
+              AI 演绎文章观点
             </h4>
             <p className="text-xs text-slate-500 leading-relaxed">
-              AI
-              自动识别文章核心观点，模拟主持人与嘉宾的多维度深度对谈，告别单一朗读。
+              AI 自动提取文章核心论点，生成主持人与嘉宾的深度对谈。不是单调朗读，而是有论证、有例子的互动演绎，完播率远高于单人播报。
             </p>
           </div>
           <div className="p-6 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
             <div className="h-10 w-10 rounded-xl bg-brand-tertiary/10 flex items-center justify-center">
-              <AudioLines size={20} className="text-brand-tertiary" />
+              <Zap size={20} className="text-brand-tertiary" />
             </div>
             <h4 className="text-white font-semibold text-sm">
-              高品质音色还原
+              分钟级内容生产
             </h4>
             <p className="text-xs text-slate-500 leading-relaxed">
-              自研音频增强引擎，提供自然的情绪起伏与呼吸感，带来身临其境的听觉体验。
+              从文章链接到可发布播客只需 5 分钟。响度标准化 + 智能音频后处理，直接达到小宇宙、喜马拉雅发布标准，无需二次剪辑。
             </p>
           </div>
         </div>

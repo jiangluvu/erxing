@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useAppStore } from "./store";
 import SideNavBar from "./components/SideNavBar";
+import Toast from "./components/Toast";
 import { getPodcasts } from "./api";
 import ZeroStatePage from "./pages/ZeroStatePage";
 import MyPodcastsPage from "./pages/MyPodcastsPage";
@@ -20,6 +21,7 @@ import LoginPage from "./pages/LoginPage";
 const pages = {
   home: ZeroStatePage,
   myPodcasts: MyPodcastsPage,
+  output: MyPodcastsPage,
   generation: GenerationPage,
   player: PlayerPage,
   detail: DetailPage,
@@ -54,6 +56,7 @@ export default function App() {
       <main className="ml-[240px] flex-1">
         <Page />
       </main>
+      <Toast />
     </div>
   );
 }

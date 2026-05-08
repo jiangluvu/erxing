@@ -26,6 +26,11 @@ ZHI_API_KEY = os.environ.get("ZHI_API_KEY")
 ZHI_BASE_URL = "https://api.zhizengzeng.com/anthropic"
 ZHI_MODEL = "deepseek-v4-flash"
 EVAL_MODEL = "gpt-4o-mini"
+MODEL_MAP = {
+    "kimi": "deepseek-v4-flash",
+    "deepseek": "deepseek-v4",
+    "gpt4o": "gpt-4o",
+}
 FETCH_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -136,9 +141,9 @@ EVAL_SYSTEM = """你是一个播客质量评估专家。请从以下四个维度
 
 DURATION_MAP = {"short": 5, "standard": 10, "long": 15}
 
-def _call_ai(system: str, content: str) -> str:
+def _call_ai(system: str, content: str, model: str | None = None) -> str:
     resp = client.messages.create(
-        model=ZHI_MODEL, max_tokens=4096,
+        model=model or ZHI_MODEL, max_tokens=4096,
         system=system,
         messages=[{"role": "user", "content": content}],
     )
@@ -308,13 +313,65 @@ def tts_script(script: list[dict]) -> str:
         logger.info(f"TTS done: {out_path}")
     return str(out_path)
 
+def _post_process_audio(input_path: str, high_quality: bool = False, bg_music: bool = False) -> str:
+    """Apply audio post-processing (enhancement + background music). Returns final path."""
+    tmp_dir = Path(input_path).parent
+    current = input_path
+
+    if high_quality:
+        hq_path = tmp_dir / "hq.mp3"
+        try:
+            subprocess.run(
+                [FFMPEG_PATH, "-y", "-i", current,
+                 "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                 "-c:a", "libmp3lame", "-q:a", "2", str(hq_path)],
+                check=True, capture_output=True
+            )
+            current = str(hq_path)
+            logger.info(f"Audio enhanced (high_quality): {hq_path.name}")
+        except Exception as e:
+            logger.warning(f"High-quality enhancement failed, using original: {e}")
+
+    if bg_music:
+        try:
+            dur = subprocess.run(
+                [FFPROBE_PATH, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", current],
+                capture_output=True, text=True, check=True
+            )
+            duration = float(dur.stdout.strip())
+            bg_path = tmp_dir / "bg_pad.mp3"
+            # Generate a soft ambient pad (C major chord)
+            subprocess.run(
+                [FFMPEG_PATH, "-y", "-f", "lavfi",
+                 "-i", "aevalsrc=0.05*sin(261.63*2*PI*t)+0.025*sin(329.63*2*PI*t)+0.015*sin(392.00*2*PI*t):s=48000",
+                 "-t", str(duration + 1), "-ac", "2", "-ar", "44100", str(bg_path)],
+                check=True, capture_output=True
+            )
+            final_path = tmp_dir / "final.mp3"
+            fade = f"afade=t=out:st={duration}:d=1"
+            subprocess.run(
+                [FFMPEG_PATH, "-y", "-i", current, "-i", str(bg_path),
+                 "-filter_complex",
+                 f"[0:a]volume=1.0[a0];[1:a]{fade},volume=0.06[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=2[a]",
+                 "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "2", str(final_path)],
+                check=True, capture_output=True
+            )
+            current = str(final_path)
+            logger.info(f"Audio mixed with background: {final_path.name}")
+        except Exception as e:
+            logger.warning(f"Background music mixing failed, using original: {e}")
+
+    return current
+
+
 # ── TTFA Streaming Generation ──
 
 SESSION_TIMEOUT = 1800  # 30 minutes
 SESSION_CLEANUP_INTERVAL = 300  # 5 minutes
 
 _sessions: dict[str, dict] = {}
-_session_lock = threading.Lock()
+_session_lock = threading.RLock()
 
 SESSIONS_PATH = BASE_DIR / "sessions.json"
 
@@ -430,7 +487,7 @@ def generate_opening(topic: str) -> list[dict]:
     return dialogue[:2]
 
 
-def _start_generation(url: str, text: str, duration: str, title: str | None = None, request_id: str | None = None) -> tuple[str, list[dict]]:
+def _start_generation(url: str, text: str, duration: str, title: str | None = None, request_id: str | None = None, model: str | None = None, high_quality: bool = False, bg_music: bool = False) -> tuple[str, list[dict]]:
     """Create session, generate opening script, and start background thread.
     Returns (session_id, opening_script)."""
     if not request_id:
@@ -443,6 +500,9 @@ def _start_generation(url: str, text: str, duration: str, title: str | None = No
         title = "未知话题"
 
     _session_create(session_id, request_id, duration, title)
+    _session_set(session_id, "model", model)
+    _session_set(session_id, "high_quality", high_quality)
+    _session_set(session_id, "bg_music", bg_music)
 
     opening_script = generate_opening(title)
     _session_set(session_id, "opening_script", opening_script)
@@ -450,7 +510,7 @@ def _start_generation(url: str, text: str, duration: str, title: str | None = No
 
     thread = threading.Thread(
         target=_background_full_generation,
-        args=(session_id, url, text, duration, opening_script),
+        args=(session_id, url, text, duration, opening_script, model, high_quality, bg_music),
         daemon=True,
     )
     thread.start()
@@ -482,7 +542,8 @@ def _build_continuation_prompt(opening_script: list[dict]) -> str:
 
 
 def _background_full_generation(session_id: str, url: str, text: str,
-                                 duration: str, opening_script: list[dict]):
+                                 duration: str, opening_script: list[dict],
+                                 model: str | None = None, high_quality: bool = False, bg_music: bool = False):
     """Full generation pipeline running in a background thread."""
     logger.info(f"[bg] Starting full generation for session {session_id}")
     try:
@@ -514,7 +575,7 @@ def _background_full_generation(session_id: str, url: str, text: str,
 
         # STEP1: key points
         t1 = time.time()
-        key_points_raw = _call_ai(STEP1_SYSTEM, f"请分析以下文章的核心观点：\n\n{clean_text}")
+        key_points_raw = _call_ai(STEP1_SYSTEM, f"请分析以下文章的核心观点：\n\n{clean_text}", model=model)
         _session_set(session_id, "progress", 50)
 
         # STEP2: full dialogue continuing from opening
@@ -529,7 +590,7 @@ def _background_full_generation(session_id: str, url: str, text: str,
 {opening_text}
 
 请直接从第一轮讨论开始，自然地延续上面的开场。"""
-        dialogue_raw = _call_ai(STEP2_SYSTEM, step2_prompt)
+        dialogue_raw = _call_ai(STEP2_SYSTEM, step2_prompt, model=model)
         llm_time = int((time.time() - t1) * 1000)
         _session_set(session_id, "llm_time_ms", llm_time)
         _session_set(session_id, "progress", 70)
@@ -555,6 +616,8 @@ def _background_full_generation(session_id: str, url: str, text: str,
         # TTS full
         t2 = time.time()
         audio_path = tts_script(complete_dialogue)
+        # Audio post-processing
+        audio_path = _post_process_audio(audio_path, high_quality=high_quality, bg_music=bg_music)
         tts_ms = int((time.time() - t2) * 1000)
         _session_set(session_id, "tts_time_ms", tts_ms)
         _session_set(session_id, "full_audio_path", audio_path)
@@ -608,6 +671,9 @@ def api_generate_streaming():
     text = data.get("text", "").strip()
     duration = data.get("duration", "standard")
     request_id = data.get("request_id", str(uuid.uuid4()))
+    model = MODEL_MAP.get(data.get("model", "kimi"))
+    high_quality = bool(data.get("high_quality", False))
+    bg_music = bool(data.get("bg_music", False))
     session_id = str(uuid.uuid4())
     t0 = time.time()
 
@@ -617,7 +683,7 @@ def api_generate_streaming():
         return jsonify({"error": "服务端未配置 API 密钥"}), 500
 
     try:
-        session_id, opening_script = _start_generation(url, text, duration, request_id=request_id)
+        session_id, opening_script = _start_generation(url, text, duration, request_id=request_id, model=model, high_quality=high_quality, bg_music=bg_music)
 
         # TTS opening (~2s)
         opening_audio_path = _tts_script_segment(opening_script, f"opening_{session_id[:8]}")

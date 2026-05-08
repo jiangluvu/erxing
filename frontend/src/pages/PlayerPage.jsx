@@ -1,6 +1,8 @@
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useState } from "react";
 import { useAppStore } from "../store";
 import { usePlayer } from "../hooks/usePlayer";
+import { useGeneration } from "../hooks/useGeneration";
+import { addFavorite, downloadPodcast } from "../api";
 import {
   ArrowLeft,
   Heart,
@@ -13,6 +15,7 @@ import {
   FastForward,
   SkipForward,
   User,
+  Sparkles,
 } from "lucide-react";
 
 function formatTime(s) {
@@ -30,9 +33,71 @@ export default function PlayerPage() {
   const duration = useAppStore((s) => s.duration);
   const scriptData = useAppStore((s) => s.scriptData);
   const activeTranscriptIndex = useAppStore((s) => s.activeTranscriptIndex);
+  const sessionId = useAppStore((s) => s.sessionId);
+  const showToast = useAppStore((s) => s.showToast);
 
   const { togglePlay, seek, seekRelative } = usePlayer();
+  const { startGeneration } = useGeneration();
   const progressRef = useRef(null);
+  const [favorited, setFavorited] = useState(false);
+
+  const fullAudioUrl = useAppStore((s) => s.fullAudioUrl);
+  const previewAudioUrl = useAppStore((s) => s.previewAudioUrl);
+  const selectedModel = useAppStore((s) => s.selectedModel);
+  const selectedDuration = useAppStore((s) => s.selectedDuration);
+  const highQuality = useAppStore((s) => s.highQuality);
+  const bgMusic = useAppStore((s) => s.bgMusic);
+  const hasAudio = fullAudioUrl || previewAudioUrl;
+
+  const handleGenerateFromPlayer = async () => {
+    const topic = currentPodcast?.title || "";
+    if (!topic) return;
+    const payload = {
+      text: topic,
+      model: selectedModel,
+      duration: selectedDuration,
+      high_quality: highQuality,
+      bg_music: bgMusic,
+    };
+    try {
+      await startGeneration(payload);
+      setPage("generation");
+    } catch (e) {
+      showToast(e.message || "生成失败", "error");
+    }
+  };
+
+  const [downloading, setDownloading] = useState(false);
+
+  const handleFavorite = async () => {
+    if (!sessionId) return;
+    try {
+      await addFavorite(sessionId);
+      setFavorited(true);
+    } catch {
+      setFavorited((v) => !v);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!sessionId || downloading) return;
+    setDownloading(true);
+    try {
+      const blob = await downloadPodcast(sessionId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${currentPodcast?.title || "podcast"}.mp3`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      showToast(e.message || "下载失败", "error");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
@@ -89,10 +154,21 @@ export default function PlayerPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button className="p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white transition-all">
-            <Heart size={18} />
+          <button
+            onClick={handleFavorite}
+            className={`p-2 rounded-lg hover:bg-white/5 transition-all ${
+              favorited ? "text-brand-pink" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            <Heart size={18} fill={favorited ? "currentColor" : "none"} />
           </button>
-          <button className="p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white transition-all">
+          <button
+            onClick={handleDownload}
+            disabled={downloading}
+            className={`p-2 rounded-lg hover:bg-white/5 transition-all ${
+              downloading ? "text-brand-pink" : "text-slate-400 hover:text-white"
+            }`}
+          >
             <Download size={18} />
           </button>
           <button className="p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white transition-all">
@@ -199,30 +275,40 @@ export default function PlayerPage() {
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <div className="flex items-center justify-center gap-6">
+            {hasAudio ? (
+              <div className="flex items-center justify-center gap-6">
+                <button
+                  onClick={() => seekRelative(-15)}
+                  className="p-3 rounded-full hover:bg-white/5 text-slate-400 hover:text-white transition-all"
+                >
+                  <Rewind size={20} />
+                </button>
+                <button
+                  onClick={togglePlay}
+                  className="w-14 h-14 rounded-full bg-white flex items-center justify-center text-black hover:bg-white/90 transition-all shadow-[0_0_30px_rgba(255,255,255,0.1)]"
+                >
+                  {isPlaying ? (
+                    <Pause size={24} />
+                  ) : (
+                    <Play size={24} className="ml-0.5" />
+                  )}
+                </button>
+                <button
+                  onClick={() => seekRelative(15)}
+                  className="p-3 rounded-full hover:bg-white/5 text-slate-400 hover:text-white transition-all"
+                >
+                  <FastForward size={20} />
+                </button>
+              </div>
+            ) : (
               <button
-                onClick={() => seekRelative(-15)}
-                className="p-3 rounded-full hover:bg-white/5 text-slate-400 hover:text-white transition-all"
+                onClick={handleGenerateFromPlayer}
+                className="group relative flex items-center gap-3 px-10 py-3.5 bg-white hover:bg-white/90 text-black rounded-full font-bold text-base transition-all active:scale-95 shadow-[0_0_40px_rgba(255,255,255,0.1)]"
               >
-                <Rewind size={20} />
+                <Sparkles size={18} />
+                <span>生成完整播客</span>
               </button>
-              <button
-                onClick={togglePlay}
-                className="w-14 h-14 rounded-full bg-white flex items-center justify-center text-black hover:bg-white/90 transition-all shadow-[0_0_30px_rgba(255,255,255,0.1)]"
-              >
-                {isPlaying ? (
-                  <Pause size={24} />
-                ) : (
-                  <Play size={24} className="ml-0.5" />
-                )}
-              </button>
-              <button
-                onClick={() => seekRelative(15)}
-                className="p-3 rounded-full hover:bg-white/5 text-slate-400 hover:text-white transition-all"
-              >
-                <FastForward size={20} />
-              </button>
-            </div>
+            )}
           </div>
         </div>
 

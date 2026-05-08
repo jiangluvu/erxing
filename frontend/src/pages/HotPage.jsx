@@ -1,45 +1,74 @@
-import { useState } from "react";
-import { Flame, PlayCircle, Clock, Play } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Play, AlertCircle, RefreshCw } from "lucide-react";
 import { useAppStore } from "../store";
+import { getExplore } from "../api";
 
 const filters = ["全部", "科技", "商业", "文化", "生活方式"];
 
-const mockHot = [
-  {
-    id: "1",
-    title: "AI 时代的教育变革：为什么我们需要重新定义学习",
-    tag: "精选",
-    tagType: "featured",
-    desc: "深度探讨了 AI 对教育体系的影响，从个性化学习到智能评估的全面变革…",
-    plays: "2.3k",
-    duration: "12 分钟",
-    platform: "公众号",
-  },
-  {
-    id: "2",
-    title: "2026 年新能源汽车市场趋势：价格战后的新格局",
-    tag: "热门",
-    tagType: "hot",
-    desc: "分析新能源汽车市场的竞争格局变化，从价格战到技术战的转型之路…",
-    plays: "1.8k",
-    duration: "15 分钟",
-    platform: "知乎",
-  },
-  {
-    id: "3",
-    title: "特斯拉 FSD 入华：自动驾驶的新篇章",
-    tag: "热门",
-    tagType: "hot",
-    desc: "FSD 正式进入中国，对本土企业产生的影响与竞争格局分析…",
-    plays: "1.5k",
-    duration: "10 分钟",
-    platform: "B站",
-  },
-];
+function platformColor(platform) {
+  const map = {
+    公众号: "bg-brand-pink/10 text-brand-pink",
+    知乎: "bg-[#5E9EFF]/10 text-[#5E9EFF]",
+    B站: "bg-brand-tertiary/10 text-brand-tertiary",
+    网页: "bg-white/5 text-slate-500",
+    小红书: "bg-red-400/10 text-red-400",
+  };
+  return map[platform] || map["网页"];
+}
+
+function SkeletonRow() {
+  return (
+    <div className="flex items-start gap-4 bg-[#161618] border border-[#2a2a2a] rounded-2xl p-4 animate-pulse">
+      <div className="w-10 h-10 rounded-xl bg-white/5 flex-shrink-0 mt-0.5"></div>
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className="h-4 bg-white/5 rounded w-3/4"></div>
+        <div className="h-3 bg-white/5 rounded w-1/2"></div>
+        <div className="h-3 bg-white/5 rounded w-20"></div>
+      </div>
+      <div className="w-8 h-8 rounded-lg bg-white/5 flex-shrink-0"></div>
+    </div>
+  );
+}
 
 export default function HotPage() {
   const [activeFilter, setActiveFilter] = useState("全部");
+  const [articles, setArticles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const setPage = useAppStore((s) => s.setPage);
+  const setCurrentPodcast = useAppStore((s) => s.setCurrentPodcast);
+  const setSessionId = useAppStore((s) => s.setSessionId);
+  const setScriptData = useAppStore((s) => s.setScriptData);
+  const setTimings = useAppStore((s) => s.setTimings);
+  const setFullAudioUrl = useAppStore((s) => s.setFullAudioUrl);
+  const setPreviewAudioUrl = useAppStore((s) => s.setPreviewAudioUrl);
+  const showToast = useAppStore((s) => s.showToast);
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    getExplore("all")
+      .then((data) => {
+        setArticles(data?.articles || []);
+      })
+      .catch((e) => {
+        setError(e.message || "加载失败");
+        setArticles([]);
+        showToast(e.message || "加载失败", "error");
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const filtered =
+    activeFilter === "全部"
+      ? articles
+      : articles.filter((a) =>
+          a.tag?.includes(activeFilter) || a.platform === activeFilter
+        );
 
   return (
     <div className="p-10 max-w-3xl mx-auto">
@@ -63,24 +92,67 @@ export default function HotPage() {
         ))}
       </div>
 
-      {/* Hot List */}
-      <div className="space-y-3">
-        {mockHot.map((item, i) => {
-          const isFirst = i === 0;
-          return (
+      {loading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <SkeletonRow key={i} />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
+            <AlertCircle size={28} className="text-slate-600" />
+          </div>
+          <h3 className="text-white font-semibold mb-1">加载失败</h3>
+          <p className="text-sm text-slate-500 mb-6">{error}</p>
+          <button
+            onClick={load}
+            className="px-4 py-2.5 bg-white text-black rounded-xl text-sm font-bold hover:bg-white/90 transition-all flex items-center gap-2"
+          >
+            <RefreshCw size={16} />
+            重试
+          </button>
+        </div>
+      ) : filtered.length > 0 ? (
+        <div className="space-y-3">
+          {filtered.map((item, i) => (
             <div
               key={item.id}
               className="flex items-start gap-4 bg-[#161618] border border-[#2a2a2a] rounded-2xl p-4 hover:border-white/10 transition-all cursor-pointer"
-              onClick={() => setPage("player")}
+              onClick={() => {
+                const previewScript = [
+                  { speaker: "小姜", text: `今天咱们来聊聊《${item.title}》。` },
+                  { speaker: "小羊", text: item.summary || item.desc },
+                  ...(item.chapters || []).map((ch, i) => ({
+                    speaker: i % 2 === 0 ? "小姜" : "小羊",
+                    text: `${ch.t}，${ch.d}`,
+                  })),
+                ];
+                const previewTimings = previewScript.map((_, i) => ({
+                  start: i * 8,
+                  end: (i + 1) * 8,
+                }));
+                setCurrentPodcast({
+                  title: item.title,
+                  platform: item.platform,
+                  time: "刚刚",
+                });
+                setSessionId(item.id);
+                setScriptData(previewScript);
+                setTimings(previewTimings);
+                setFullAudioUrl(null);
+                setPreviewAudioUrl(null);
+                setPage("player");
+              }}
             >
               <div
                 className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                  isFirst ? "bg-brand-pink/10" : "bg-white/5"
+                  i === 0 ? "bg-brand-pink/10" : "bg-white/5"
                 }`}
               >
                 <span
                   className={`text-sm font-bold ${
-                    isFirst ? "text-brand-pink" : "text-slate-400"
+                    i === 0 ? "text-brand-pink" : "text-slate-400"
                   }`}
                 >
                   {i + 1}
@@ -88,10 +160,12 @@ export default function HotPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <h3 className="text-sm font-semibold text-white">{item.title}</h3>
+                  <h3 className="text-sm font-semibold text-white">
+                    {item.title}
+                  </h3>
                   <span
                     className={`text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0 ${
-                      item.tagType === "featured"
+                      item.tag === "精选"
                         ? "bg-brand-pink/10 text-brand-pink border-brand-pink/20"
                         : "bg-white/5 text-slate-500 border-white/5"
                     }`}
@@ -101,22 +175,22 @@ export default function HotPage() {
                 </div>
                 <p className="text-xs text-slate-500 mb-2">{item.desc}</p>
                 <div className="flex items-center gap-3 text-xs text-slate-500">
-                  <span className="flex items-center gap-1">
-                    <PlayCircle size={12} /> {item.plays} 收听
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-slate-500 border border-white/5">
+                    {item.platform}
                   </span>
-                  <span className="flex items-center gap-1">
-                    <Clock size={12} /> {item.duration}
-                  </span>
-                  <span>{item.platform}</span>
                 </div>
               </div>
               <button className="p-2 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-all flex-shrink-0">
                 <Play size={16} />
               </button>
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12 text-sm text-slate-500">
+          该分类下暂无内容
+        </div>
+      )}
     </div>
   );
 }

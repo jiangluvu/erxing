@@ -52,4 +52,9 @@ export const useAppStore = create((set, get) => ({
   setUserName: (n) => set({ userName: n }),
   genCount: 0,
   setGenCount: (c) => set({ genCount: c }),
+
+  // Toast
+  toast: null,
+  showToast: (message, type = "info") => set({ toast: { message, type } }),
+  clearToast: () => set({ toast: null }),
 }));

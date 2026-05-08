@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useAppStore } from "../store";
+import { addHistory } from "../api";
 
 export function usePlayer() {
   const audioRef = useRef(null);
+  const lastReportRef = useRef(0);
 
   const isPlaying = useAppStore((s) => s.isPlaying);
   const setIsPlaying = useAppStore((s) => s.setIsPlaying);
@@ -13,6 +15,7 @@ export function usePlayer() {
   const scriptData = useAppStore((s) => s.scriptData);
   const timings = useAppStore((s) => s.timings);
   const setActiveTranscriptIndex = useAppStore((s) => s.setActiveTranscriptIndex);
+  const sessionId = useAppStore((s) => s.sessionId);
 
   const audioUrl = fullAudioUrl || previewAudioUrl;
 
@@ -26,15 +29,25 @@ export function usePlayer() {
       setDuration(audio.duration);
     };
     const onTimeUpdate = () => {
-      setCurrentTime(audio.currentTime);
+      const t = audio.currentTime;
+      setCurrentTime(t);
       // Update transcript highlight
       if (timings.length) {
         const idx = timings.findIndex(
-          (t) => audio.currentTime >= t.start && audio.currentTime < t.end
+          (tm) => t >= tm.start && t < tm.end
         );
         if (idx >= 0) {
           setActiveTranscriptIndex(idx);
         }
+      }
+      // Report playback progress every 10s
+      if (sessionId && t - lastReportRef.current >= 10) {
+        lastReportRef.current = t;
+        addHistory({
+          session_id: sessionId,
+          progress: Math.floor(t),
+          duration: Math.floor(audio.duration || 0),
+        }).catch(() => {});
       }
     };
     const onEnded = () => {
@@ -53,7 +66,7 @@ export function usePlayer() {
       audio.removeEventListener("ended", onEnded);
       audioRef.current = null;
     };
-  }, [audioUrl, timings, setDuration, setCurrentTime, setIsPlaying, setActiveTranscriptIndex]);
+  }, [audioUrl, timings, setDuration, setCurrentTime, setIsPlaying, setActiveTranscriptIndex, sessionId]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;

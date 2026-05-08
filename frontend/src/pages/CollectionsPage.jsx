@@ -9,6 +9,8 @@ import {
 export default function CollectionsPage() {
   const [collections, setCollections] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [newName, setNewName] = useState("");
 
   useEffect(() => {
     getCollections()
@@ -20,22 +22,23 @@ export default function CollectionsPage() {
   }, []);
 
   const handleAdd = async () => {
-    const name = window.prompt("合集名称");
-    if (!name?.trim()) return;
+    if (!newName?.trim()) return;
     try {
-      const data = await addCollection({ name: name.trim() });
+      const data = await addCollection({ name: newName.trim() });
       setCollections(data?.collections || []);
     } catch {
       setCollections((prev) => [
         ...prev,
         {
           id: String(Date.now()),
-          name: name.trim(),
+          name: newName.trim(),
           session_ids: [],
           created_at: new Date().toISOString(),
         },
       ]);
     }
+    setNewName("");
+    setShowModal(false);
   };
 
   const handleDelete = async (id) => {
@@ -55,7 +58,7 @@ export default function CollectionsPage() {
           <p className="text-sm text-slate-500 mt-1">整理你的播客，按主题归类</p>
         </div>
         <button
-          onClick={handleAdd}
+          onClick={() => setShowModal(true)}
           className="flex items-center gap-2 px-4 py-2.5 bg-white text-black rounded-xl text-sm font-bold hover:bg-white/90 transition-all"
         >
           <Plus size={16} />
@@ -118,11 +121,49 @@ export default function CollectionsPage() {
           <h3 className="text-white font-semibold mb-1">还没有合集</h3>
           <p className="text-sm text-slate-500 mb-6">创建合集来整理你的播客</p>
           <button
-            onClick={handleAdd}
+            onClick={() => setShowModal(true)}
             className="px-4 py-2.5 bg-white text-black rounded-xl text-sm font-bold"
           >
             新建合集
           </button>
+        </div>
+      )}
+
+      {/* Add Collection Modal */}
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-6 w-full max-w-sm">
+            <h3 className="text-white font-semibold mb-4">新建合集</h3>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAdd();
+                if (e.key === "Escape") setShowModal(false);
+              }}
+              placeholder="输入合集名称..."
+              className="w-full bg-[#1a1a1c] border border-[#2a2a2a] rounded-xl px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:border-brand-pink/50 transition-all mb-4"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  setNewName("");
+                }}
+                className="px-4 py-2 rounded-lg text-xs text-slate-400 hover:text-white transition-all"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleAdd}
+                className="px-4 py-2 bg-white text-black rounded-lg text-xs font-bold hover:bg-white/90 transition-all"
+              >
+                创建
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

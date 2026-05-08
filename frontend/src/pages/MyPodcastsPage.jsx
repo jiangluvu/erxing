@@ -1,7 +1,23 @@
 import { useState, useEffect } from "react";
-import { Play } from "lucide-react";
+import { Play, AlertCircle, RefreshCw } from "lucide-react";
 import { useAppStore } from "../store";
 import { getPodcasts } from "../api";
+
+function SkeletonCard() {
+  return (
+    <div className="bg-[#161618] border border-[#2a2a2a] rounded-2xl overflow-hidden animate-pulse">
+      <div className="h-36 bg-white/5"></div>
+      <div className="p-4 space-y-3">
+        <div className="h-4 bg-white/5 rounded w-3/4"></div>
+        <div className="h-3 bg-white/5 rounded w-1/2"></div>
+        <div className="flex justify-between">
+          <div className="h-3 bg-white/5 rounded w-16"></div>
+          <div className="h-3 bg-white/5 rounded w-12"></div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function formatRelativeTime(ts) {
   if (!ts) return "刚刚";
@@ -28,10 +44,14 @@ const gradients = [
 export default function MyPodcastsPage() {
   const [podcasts, setPodcasts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const setPage = useAppStore((s) => s.setPage);
   const setCurrentPodcast = useAppStore((s) => s.setCurrentPodcast);
+  const setSessionId = useAppStore((s) => s.setSessionId);
+  const showToast = useAppStore((s) => s.showToast);
 
   const handleClick = (podcast) => {
+    setSessionId(podcast.id);
     setCurrentPodcast({
       title: podcast.title || podcast.article_title,
       platform: podcast.platform || "网页",
@@ -41,16 +61,23 @@ export default function MyPodcastsPage() {
     setPage("player");
   };
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
+    setError(null);
     getPodcasts()
       .then((data) => {
-        const list = data?.podcasts || [];
-        setPodcasts(list);
+        setPodcasts(data?.podcasts || []);
       })
-      .catch(() => {
+      .catch((e) => {
+        setError(e.message || "加载失败");
         setPodcasts([]);
+        showToast(e.message || "加载失败", "error");
       })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   return (
@@ -61,7 +88,26 @@ export default function MyPodcastsPage() {
       </div>
 
       {loading ? (
-        <div className="text-center py-12 text-sm text-slate-500">加载中…</div>
+        <div className="grid grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
+            <AlertCircle size={28} className="text-slate-600" />
+          </div>
+          <h3 className="text-white font-semibold mb-1">加载失败</h3>
+          <p className="text-sm text-slate-500 mb-6">{error}</p>
+          <button
+            onClick={load}
+            className="px-4 py-2.5 bg-white text-black rounded-xl text-sm font-bold hover:bg-white/90 transition-all flex items-center gap-2"
+          >
+            <RefreshCw size={16} />
+            重试
+          </button>
+        </div>
       ) : podcasts.length > 0 ? (
         <div className="grid grid-cols-3 gap-4">
           {podcasts.map((podcast, i) => (

@@ -2,7 +2,7 @@
 
 评分维度（1-5）：
 - sounds_like_real_conversation：是否像真实对话
-- suitable_for_car：是否适合车载收听
+- suitable_for_car：是否适合播客收听
 - info_density_reasonableness：信息密度是否合理
 - willing_to_finish：是否愿意完整听完
 

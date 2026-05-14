@@ -17,11 +17,12 @@ import HistoryPage from "./pages/HistoryPage";
 import FavoritesPage from "./pages/FavoritesPage";
 import NotesPage from "./pages/NotesPage";
 import LoginPage from "./pages/LoginPage";
+import ScriptEditorPage from "./pages/ScriptEditorPage";
+import MyVoicesPage from "./pages/MyVoicesPage";
 
 const pages = {
   home: ZeroStatePage,
   myPodcasts: MyPodcastsPage,
-  output: MyPodcastsPage,
   generation: GenerationPage,
   player: PlayerPage,
   detail: DetailPage,
@@ -34,6 +35,8 @@ const pages = {
   favorites: FavoritesPage,
   notes: NotesPage,
   login: LoginPage,
+  scriptEditor: ScriptEditorPage,
+  myVoices: MyVoicesPage,
 };
 
 export default function App() {

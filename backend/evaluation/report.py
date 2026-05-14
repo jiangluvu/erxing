@@ -223,7 +223,7 @@ def print_report(report: UnifiedReport):
     """打印统一报表到终端。"""
     border = "=" * 50
     print(f"\n{border}")
-    print(f"   Drivio 评估报告 — {report.version}")
+    print(f"   Podcraft 评估报告 — {report.version}")
     print(f"   benchmark: {report.benchmark_version}  |  {report.generated_at[:19]}")
     print(border)
 
@@ -250,7 +250,7 @@ def print_report(report: UnifiedReport):
         for r in ab.results:
             label_map = {
                 "overall_naturalness": "整体自然度",
-                "car_scene_fit": "车载场景适配",
+                "car_scene_fit": "播客收听场景适配",
                 "info_density_reasonableness": "信息密度合理性",
             }
             label = label_map.get(r.dimension, r.dimension)
@@ -288,7 +288,7 @@ def print_report(report: UnifiedReport):
         print(f"  {'评分人数':>12}: {h.rater_count}")
         label_map = {
             "sounds_like_real_conversation": "像真实对话",
-            "suitable_for_car": "适合车载",
+            "suitable_for_car": "适合播客收听",
             "info_density_reasonableness": "信息密度合理",
             "willing_to_finish": "愿意听完",
         }

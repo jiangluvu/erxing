@@ -3,9 +3,30 @@ __pycache__/
 .env
 node_modules/
 .vite/
-dist/
 .vscode/
 *.egg-info/
 .pytest_cache/
 logs.jsonl
 evaluation/results/
+
+# Logs
+*.log
+backend/*.log
+frontend/*.log
+
+# Audio test files
+backend/*.mp3
+
+# Runtime data files
+backend/*.jsonl
+backend/sessions.json
+backend/ref_texts.txt
+backend/rag/data/
+backend/benchmark_output/
+
+# Temporary test scripts
+backend/test_*.py
+backend/fish_verify.py
+backend/gen_ref_voices.py
+backend/generate_edge_podcast.py
+backend/tts_benchmark.py

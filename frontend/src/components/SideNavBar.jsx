@@ -2,25 +2,17 @@ import {
   Sparkles,
   Search,
   Library,
-  Headphones,
   Rss,
   Flame,
   Plus,
   LogIn,
-  Folder,
   Clock,
   Heart,
   FileText,
   Settings,
+  Mic,
 } from "lucide-react";
 import { useAppStore } from "../store";
-
-const navItems = [
-  { id: "home", label: "新播客", icon: Sparkles },
-  { id: "search", label: "全局搜索", icon: Search },
-  { id: "myPodcasts", label: "我的播客", icon: Library, badge: "3" },
-  { id: "output", label: "产出物", icon: Headphones },
-];
 
 const exploreItems = [
   { id: "subscriptions", label: "订阅", icon: Rss },
@@ -32,6 +24,7 @@ const collectionItems = [
 ];
 
 const toolItems = [
+  { id: "myVoices", label: "我的声音", icon: Mic },
   { id: "history", label: "历史记录", icon: Clock },
   { id: "favorites", label: "收藏", icon: Heart },
   { id: "notes", label: "笔记", icon: FileText },
@@ -49,7 +42,6 @@ export default function SideNavBar() {
     { id: "home", label: "新播客", icon: Sparkles },
     { id: "search", label: "全局搜索", icon: Search },
     { id: "myPodcasts", label: "我的播客", icon: Library, badge: String(genCount) },
-    { id: "output", label: "产出物", icon: Headphones },
   ];
 
   const NavLink = ({ item }) => {
@@ -81,10 +73,10 @@ export default function SideNavBar() {
     <aside className="fixed left-0 top-0 h-full w-[240px] bg-[#1a1a1a] border-r border-[#2a2a2a] flex flex-col z-50">
       <div className="p-6">
         <h2 className="text-xs font-medium text-slate-500 mb-6">
-          欢迎 耳行 新用户!
+          欢迎 播刻 新用户!
         </h2>
         <div className="flex items-center gap-3 mb-8">
-          <span className="text-2xl font-black text-brand-pink">耳行</span>
+          <span className="text-2xl font-black text-brand-pink">播刻</span>
           <span className="bg-brand-pink/10 text-brand-pink text-[10px] px-2 py-0.5 rounded-full font-bold">
             PRO
           </span>

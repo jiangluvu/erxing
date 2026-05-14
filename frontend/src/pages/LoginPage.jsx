@@ -23,7 +23,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="text-3xl font-black text-brand-pink mb-2">耳行</div>
+          <div className="text-3xl font-black text-brand-pink mb-2">播刻</div>
           <p className="text-sm text-slate-500">登录以同步你的播客与收藏</p>
         </div>
 

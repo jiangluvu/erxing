@@ -1,5 +1,5 @@
 """
-Drivio Observability Report
+Podcraft Observability Report
 ============================
 Reads logs.jsonl, calculates MVP metrics, generates charts.
 
@@ -132,7 +132,7 @@ def calculate_metrics(requests: list[dict]) -> dict:
 
 def print_report(metrics: dict):
     print("\n" + "=" * 50)
-    print("   Drivio Observability Report")
+    print("   Podcraft Observability Report")
     print("=" * 50)
 
     if metrics["total"] == 0:
@@ -203,7 +203,7 @@ def generate_charts(requests: list[dict], export: bool = False):
     plt.rcParams["axes.unicode_minus"] = False
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    fig.suptitle("Drivio Observability Dashboard", fontsize=16, fontweight="bold")
+    fig.suptitle("Podcraft Observability Dashboard", fontsize=16, fontweight="bold")
 
     # 1. Latency distribution
     ax1 = axes[0, 0]

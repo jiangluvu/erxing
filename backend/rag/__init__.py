@@ -6,7 +6,7 @@ from pathlib import Path
 from .knowledge_base import KnowledgeBase
 from .seed_articles import SEED_ARTICLES
 
-logger = logging.getLogger("erxing.rag")
+logger = logging.getLogger("boke.rag")
 
 DATA_DIR = Path(__file__).parent / "data"
 

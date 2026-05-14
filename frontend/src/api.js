@@ -58,6 +58,59 @@ export function getExplore(platform = "all") {
   return fetchJSON(`/explore?platform=${encodeURIComponent(platform)}`);
 }
 
+// ============ PARSE ============
+export function parseArticle({ url, text }) {
+  return fetchJSON("/parse", {
+    method: "POST",
+    body: JSON.stringify({ url, text }),
+  });
+}
+
+export async function uploadFile(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE}/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `上传失败 HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// ============ GENERATE SCRIPT ============
+export function generateScript({ clean_text }) {
+  return fetchJSON("/generate_script", {
+    method: "POST",
+    body: JSON.stringify({ clean_text }),
+  });
+}
+
+// ============ TTS ============
+export async function generateTTS(payload) {
+  const res = await fetch(`${API_BASE}/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "语音合成失败");
+  }
+  const blob = await res.blob();
+  return { blob };
+}
+
+// ============ DRAFT ============
+export function getDraft(topic) {
+  return fetchJSON("/draft", {
+    method: "POST",
+    body: JSON.stringify({ topic }),
+  });
+}
+
 // ============ SUBSCRIPTIONS ============
 export function getSubscriptions() {
   return fetchJSON("/subscriptions");

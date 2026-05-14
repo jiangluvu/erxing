@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 
-const STORAGE_KEY = "erxing_history";
+const STORAGE_KEY = "boke_history";
 const MAX_HISTORY = 50;
 
 function loadHistory() {

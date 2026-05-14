@@ -188,7 +188,7 @@ export default function PlayerPage() {
                 <div
                   className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
                     activeTranscriptIndex >= 0 &&
-                    scriptData?.[activeTranscriptIndex]?.speaker === "小羊"
+                    scriptData?.[activeTranscriptIndex]?.speaker === "男声"
                       ? "bg-brand-pink/10 text-brand-pink ring-2 ring-brand-pink/50"
                       : "bg-white/5 text-slate-400"
                   }`}
@@ -196,17 +196,17 @@ export default function PlayerPage() {
                   <User size={32} />
                 </div>
               </div>
-              <div className="text-sm font-semibold text-white">小羊</div>
+              <div className="text-sm font-semibold text-white">男声</div>
               <div
                 className={`text-xs mt-0.5 ${
                   activeTranscriptIndex >= 0 &&
-                  scriptData?.[activeTranscriptIndex]?.speaker === "小羊"
+                  scriptData?.[activeTranscriptIndex]?.speaker === "男声"
                     ? "text-brand-pink"
                     : "text-slate-500"
                 }`}
               >
                 {activeTranscriptIndex >= 0 &&
-                scriptData?.[activeTranscriptIndex]?.speaker === "小羊"
+                scriptData?.[activeTranscriptIndex]?.speaker === "男声"
                   ? "正在说话"
                   : "等待中"}
               </div>
@@ -216,7 +216,7 @@ export default function PlayerPage() {
                 <div
                   className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
                     activeTranscriptIndex >= 0 &&
-                    scriptData?.[activeTranscriptIndex]?.speaker === "小姜"
+                    scriptData?.[activeTranscriptIndex]?.speaker === "女声"
                       ? "bg-brand-tertiary/10 text-brand-tertiary ring-2 ring-brand-tertiary/50"
                       : "bg-white/5 text-slate-400"
                   }`}
@@ -224,17 +224,17 @@ export default function PlayerPage() {
                   <User size={32} />
                 </div>
               </div>
-              <div className="text-sm font-semibold text-white">小姜</div>
+              <div className="text-sm font-semibold text-white">女声</div>
               <div
                 className={`text-xs mt-0.5 ${
                   activeTranscriptIndex >= 0 &&
-                  scriptData?.[activeTranscriptIndex]?.speaker === "小姜"
+                  scriptData?.[activeTranscriptIndex]?.speaker === "女声"
                     ? "text-brand-tertiary"
                     : "text-slate-500"
                 }`}
               >
                 {activeTranscriptIndex >= 0 &&
-                scriptData?.[activeTranscriptIndex]?.speaker === "小姜"
+                scriptData?.[activeTranscriptIndex]?.speaker === "女声"
                   ? "正在说话"
                   : "等待中"}
               </div>
@@ -324,7 +324,7 @@ export default function PlayerPage() {
             {scriptData?.length ? (
               scriptData.map((item, i) => {
                 const isActive = i === activeTranscriptIndex;
-                const isYang = item.speaker === "小羊";
+                const isYang = item.speaker === "男声";
                 return (
                   <div
                     key={i}

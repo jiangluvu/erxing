@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 
-const STORAGE_KEY = "erxing_favorites";
+const STORAGE_KEY = "boke_favorites";
 
 function loadFavorites() {
   try {

@@ -17,7 +17,7 @@ const chapters = [
   {
     num: "01",
     title: "核心观点导入",
-    desc: "小羊和小姜介绍了今天的主题和文章背景",
+    desc: "男声和女声介绍了今天的主题和文章背景",
     time: "00:00 - 02:30",
   },
   {
@@ -53,8 +53,8 @@ export default function DetailPage() {
   // Build a simple summary from script if available
   const summary =
     scriptData?.length > 0
-      ? `${scriptData[0].speaker}和${scriptData[1]?.speaker || "小姜"}围绕文章的核心观点展开了深入讨论，从多个维度分析了文章的论点、背景与延伸思考。`
-      : "小羊和小姜围绕文章的核心观点展开了深入讨论…";
+      ? `${scriptData[0].speaker}和${scriptData[1]?.speaker || "女声"}围绕文章的核心观点展开了深入讨论，从多个维度分析了文章的论点、背景与延伸思考。`
+      : "男声和女声围绕文章的核心观点展开了深入讨论…";
 
   const handleSaveNote = async () => {
     try {
@@ -89,7 +89,7 @@ export default function DetailPage() {
   };
 
   const handleShare = async () => {
-    const text = title ? `${title} — 来自耳行播客` : "耳行播客";
+    const text = title ? `${title} — 来自播刻播客` : "播刻播客";
     try {
       await navigator.clipboard.writeText(text);
       showToast("链接已复制到剪贴板");
@@ -99,7 +99,7 @@ export default function DetailPage() {
   };
 
   const handleFavorite = () => {
-    const favs = JSON.parse(localStorage.getItem("erxing_favs") || "[]");
+    const favs = JSON.parse(localStorage.getItem("boke_favs") || "[]");
     const id = sessionId || currentPodcast?.id;
     if (!id) {
       showToast("暂无可收藏内容");
@@ -113,7 +113,7 @@ export default function DetailPage() {
       favs.push(id);
       showToast("已收藏");
     }
-    localStorage.setItem("erxing_favs", JSON.stringify(favs));
+    localStorage.setItem("boke_favs", JSON.stringify(favs));
   };
 
   return (

@@ -135,9 +135,9 @@ export default function SubscriptionPage() {
   return (
     <div className="p-10 max-w-3xl mx-auto">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">内容源订阅</h1>
+        <h1 className="text-2xl font-bold text-white">灵感订阅</h1>
         <p className="text-sm text-slate-500 mt-1">
-          订阅你关注的内容源，自动同步生成播客
+          订阅灵感来源，追踪值得播客化的文章
         </p>
       </div>
 
@@ -230,7 +230,7 @@ export default function SubscriptionPage() {
           </div>
           <h3 className="text-white font-semibold mb-1">还没有订阅</h3>
           <p className="text-sm text-slate-500 mb-6">
-            订阅你喜欢的内容源，耳行会自动为你生成播客
+            订阅你关注的作者或专栏，新文章到达时一键播客化
           </p>
         </div>
       )}

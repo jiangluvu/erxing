@@ -16,7 +16,7 @@ EVAL_MODEL = "gpt-4o-mini"            # 评测模型
 # ── Layer 3: A/B 对比维度 ──
 class Layer3Dimensions:
     OVERALL_NATURALNESS = "overall_naturalness"       # 整体自然度
-    CAR_SCENE_FIT = "car_scene_fit"                   # 车载场景适配
+    CAR_SCENE_FIT = "car_scene_fit"                   # 播客收听场景适配
     INFO_DENSITY = "info_density_reasonableness"      # 信息密度合理性
 
 # ── Layer 4: AI 自动评测维度 ──
@@ -28,7 +28,7 @@ class Layer4Dimensions:
 # ── Layer 6: 人工评测维度 ──
 class Layer6Dimensions:
     SOUNDS_REAL = "sounds_like_real_conversation"     # 像真实对话
-    SUITABLE_CAR = "suitable_for_car"                 # 适合车载
+    SUITABLE_CAR = "suitable_for_car"                 # 适合播客收听
     INFO_DENSITY = "info_density_reasonableness"      # 信息密度合理
     WILLING_FINISH = "willing_to_finish"              # 愿意听完
 

@@ -324,7 +324,7 @@ def cmd_report(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Drivio 多层评测系统")
+    parser = argparse.ArgumentParser(description="Podcraft 多层评测系统")
     parser.add_argument("--benchmark", default="v1", nargs="?", const="v1",
                         help="运行 benchmark 评测（默认 v1）")
     parser.add_argument("--ab", action="store_true", help="运行 A/B 对比")

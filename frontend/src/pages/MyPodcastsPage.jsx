@@ -83,8 +83,8 @@ export default function MyPodcastsPage() {
   return (
     <div className="p-10 max-w-4xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">我的播客</h1>
-        <p className="text-sm text-slate-500 mt-1">你生成的所有播客</p>
+        <h1 className="text-2xl font-bold text-white">内容库</h1>
+        <p className="text-sm text-slate-500 mt-1">你播客化的所有文章，统一管理</p>
       </div>
 
       {loading ? (
@@ -161,13 +161,13 @@ export default function MyPodcastsPage() {
           <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
             <Play size={28} className="text-slate-600" />
           </div>
-          <h3 className="text-white font-semibold mb-1">还没有播客</h3>
-          <p className="text-sm text-slate-500 mb-6">去首页生成你的第一个播客吧</p>
+          <h3 className="text-white font-semibold mb-1">内容库还是空的</h3>
+          <p className="text-sm text-slate-500 mb-6">去首页把第一篇文章变成播客吧</p>
           <button
             onClick={() => setPage("home")}
             className="px-4 py-2.5 bg-white text-black rounded-xl text-sm font-bold hover:bg-white/90 transition-all"
           >
-            去生成
+            开始制作
           </button>
         </div>
       )}

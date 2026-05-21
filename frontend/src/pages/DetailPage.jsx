@@ -17,7 +17,7 @@ const chapters = [
   {
     num: "01",
     title: "核心观点导入",
-    desc: "男声和女声介绍了今天的主题和文章背景",
+    desc: "主持和嘉宾介绍了今天的主题和文章背景",
     time: "00:00 - 02:30",
   },
   {
@@ -53,8 +53,8 @@ export default function DetailPage() {
   // Build a simple summary from script if available
   const summary =
     scriptData?.length > 0
-      ? `${scriptData[0].speaker}和${scriptData[1]?.speaker || "女声"}围绕文章的核心观点展开了深入讨论，从多个维度分析了文章的论点、背景与延伸思考。`
-      : "男声和女声围绕文章的核心观点展开了深入讨论…";
+      ? `${scriptData[0].speaker === "主持" ? "主持" : "嘉宾"}和${scriptData[1]?.speaker === "主持" ? "主持" : scriptData[1]?.speaker === "嘉宾" ? "嘉宾" : "嘉宾"}围绕文章的核心观点展开了深入讨论，从多个维度分析了文章的论点、背景与延伸思考。`
+      : "主持和嘉宾围绕文章的核心观点展开了深入讨论…";
 
   const handleSaveNote = async () => {
     try {

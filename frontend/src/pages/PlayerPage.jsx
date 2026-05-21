@@ -2,7 +2,7 @@ import { useRef, useCallback, useState } from "react";
 import { useAppStore } from "../store";
 import { usePlayer } from "../hooks/usePlayer";
 import { useGeneration } from "../hooks/useGeneration";
-import { addFavorite, downloadPodcast } from "../api";
+import { addFavorite, downloadPodcast, reportUserAction } from "../api";
 import {
   ArrowLeft,
   Heart,
@@ -40,6 +40,7 @@ export default function PlayerPage() {
   const { startGeneration } = useGeneration();
   const progressRef = useRef(null);
   const [favorited, setFavorited] = useState(false);
+  const replayReportedRef = useRef(false);
 
   const fullAudioUrl = useAppStore((s) => s.fullAudioUrl);
   const previewAudioUrl = useAppStore((s) => s.previewAudioUrl);
@@ -49,9 +50,28 @@ export default function PlayerPage() {
   const bgMusic = useAppStore((s) => s.bgMusic);
   const hasAudio = fullAudioUrl || previewAudioUrl;
 
+  // Report replay when existing full podcast is played again
+  useEffect(() => {
+    if (fullAudioUrl && sessionId && currentPodcast && !replayReportedRef.current) {
+      replayReportedRef.current = true;
+      reportUserAction({
+        session_id: sessionId,
+        action_type: "replay",
+        article_title: currentPodcast.title || "",
+        platform: currentPodcast.platform || "",
+      });
+    }
+  }, [fullAudioUrl, sessionId, currentPodcast]);
+
   const handleGenerateFromPlayer = async () => {
     const topic = currentPodcast?.title || "";
     if (!topic) return;
+    // Report regenerate action
+    reportUserAction({
+      session_id: sessionId,
+      action_type: "regenerate",
+      article_title: topic,
+    });
     const payload = {
       text: topic,
       model: selectedModel,
@@ -188,7 +208,7 @@ export default function PlayerPage() {
                 <div
                   className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
                     activeTranscriptIndex >= 0 &&
-                    scriptData?.[activeTranscriptIndex]?.speaker === "男声"
+                    scriptData?.[activeTranscriptIndex]?.speaker === "主持"
                       ? "bg-brand-pink/10 text-brand-pink ring-2 ring-brand-pink/50"
                       : "bg-white/5 text-slate-400"
                   }`}
@@ -196,17 +216,17 @@ export default function PlayerPage() {
                   <User size={32} />
                 </div>
               </div>
-              <div className="text-sm font-semibold text-white">男声</div>
+              <div className="text-sm font-semibold text-white">主持</div>
               <div
                 className={`text-xs mt-0.5 ${
                   activeTranscriptIndex >= 0 &&
-                  scriptData?.[activeTranscriptIndex]?.speaker === "男声"
+                  scriptData?.[activeTranscriptIndex]?.speaker === "主持"
                     ? "text-brand-pink"
                     : "text-slate-500"
                 }`}
               >
                 {activeTranscriptIndex >= 0 &&
-                scriptData?.[activeTranscriptIndex]?.speaker === "男声"
+                scriptData?.[activeTranscriptIndex]?.speaker === "主持"
                   ? "正在说话"
                   : "等待中"}
               </div>
@@ -216,7 +236,7 @@ export default function PlayerPage() {
                 <div
                   className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
                     activeTranscriptIndex >= 0 &&
-                    scriptData?.[activeTranscriptIndex]?.speaker === "女声"
+                    scriptData?.[activeTranscriptIndex]?.speaker === "嘉宾"
                       ? "bg-brand-tertiary/10 text-brand-tertiary ring-2 ring-brand-tertiary/50"
                       : "bg-white/5 text-slate-400"
                   }`}
@@ -224,17 +244,17 @@ export default function PlayerPage() {
                   <User size={32} />
                 </div>
               </div>
-              <div className="text-sm font-semibold text-white">女声</div>
+              <div className="text-sm font-semibold text-white">嘉宾</div>
               <div
                 className={`text-xs mt-0.5 ${
                   activeTranscriptIndex >= 0 &&
-                  scriptData?.[activeTranscriptIndex]?.speaker === "女声"
+                  scriptData?.[activeTranscriptIndex]?.speaker === "嘉宾"
                     ? "text-brand-tertiary"
                     : "text-slate-500"
                 }`}
               >
                 {activeTranscriptIndex >= 0 &&
-                scriptData?.[activeTranscriptIndex]?.speaker === "女声"
+                scriptData?.[activeTranscriptIndex]?.speaker === "嘉宾"
                   ? "正在说话"
                   : "等待中"}
               </div>
@@ -324,7 +344,7 @@ export default function PlayerPage() {
             {scriptData?.length ? (
               scriptData.map((item, i) => {
                 const isActive = i === activeTranscriptIndex;
-                const isYang = item.speaker === "男声";
+                const isYang = item.speaker === "主持";
                 return (
                   <div
                     key={i}
@@ -339,7 +359,7 @@ export default function PlayerPage() {
                         isYang ? "text-brand-pink" : "text-slate-500"
                       }`}
                     >
-                      {item.speaker}
+                      {item.speaker === "主持" ? "主持" : "嘉宾"}
                     </span>
                     <p
                       className={`text-sm leading-relaxed ${

@@ -1,6 +1,6 @@
-import os, re, json, uuid, asyncio, tempfile, shutil, time, logging, threading, subprocess
+import os, re, json, uuid, asyncio, tempfile, shutil, time, logging, threading, subprocess, math
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -21,17 +21,120 @@ logger = logging.getLogger("boke")
 BASE_DIR = Path(__file__).parent
 FRONTEND_DIR = BASE_DIR.parent / "frontend" / "dist"
 LOGS_PATH = BASE_DIR / "logs.jsonl"
+BGM_UPLOAD_DIR = BASE_DIR / "uploads" / "bgm"
+BGM_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── Metrics Storage ──
+METRICS_INPUT_PATH = BASE_DIR / "metrics_input.jsonl"
+METRICS_GENERATION_PATH = BASE_DIR / "metrics_generation.jsonl"
+METRICS_PLAYBACK_PATH = BASE_DIR / "metrics_playback.jsonl"
+METRICS_USER_ACTION_PATH = BASE_DIR / "metrics_user_action.jsonl"
+EXPERIMENTS_PATH = BASE_DIR / "experiments.jsonl"
+EXP_ASSIGNMENTS_PATH = BASE_DIR / "experiment_assignments.jsonl"
+
+def _write_metrics(path: Path, entry: dict):
+    """Append a metrics entry to a JSONL file."""
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to write metrics to {path.name}: {e}")
+
+def _load_metrics(path: Path, days: int = 30) -> list[dict]:
+    """Load metrics from JSONL, filtering to recent days and auto-cleanup."""
+    if not path.exists():
+        return []
+    cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+    entries = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    ts = entry.get("timestamp")
+                    if ts:
+                        # Parse ISO timestamp
+                        try:
+                            t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            if t.timestamp() >= cutoff:
+                                entries.append(entry)
+                        except Exception:
+                            entries.append(entry)
+                    else:
+                        entries.append(entry)
+                except json.JSONDecodeError:
+                    pass
+    except Exception as e:
+        logger.warning(f"Failed to load metrics from {path.name}: {e}")
+    return entries
 
 # ── Config ──
 ZHI_API_KEY = os.environ.get("ZHI_API_KEY")
 ZHI_BASE_URL = "https://api.zhizengzeng.com/anthropic"
-ZHI_MODEL = "deepseek-v4-flash"
+ZHI_MODEL = "deepseek-v4"
 EVAL_MODEL = "gpt-4o-mini"
+ZHI_API_BASE = "https://api.zhizengzeng.com/v1/chat/completions"
+
 MODEL_MAP = {
-    "kimi": "deepseek-v4-flash",
-    "deepseek": "deepseek-v4",
-    "gpt4o": "gpt-4o",
+    "deepseek-v4":       {"id": "deepseek-v4",       "label": "DeepSeek V4",         "provider": "DeepSeek",    "desc": "默认模型，深度推理，长文表现最佳"},
+    "deepseek-v4-flash": {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash",   "provider": "DeepSeek",    "desc": "轻量快速，适合短文本"},
+    "gpt-4o":            {"id": "gpt-4o",            "label": "GPT-4o",               "provider": "OpenAI",      "desc": "创意丰富，对谈更生动"},
+    "gpt-4o-mini":       {"id": "gpt-4o-mini",       "label": "GPT-4o Mini",          "provider": "OpenAI",      "desc": "轻量版，性价比高"},
+    "claude-haiku-4-5":  {"id": "claude-haiku-4-5",  "label": "Claude Haiku 4.5",    "provider": "Anthropic",   "desc": "极速响应，适合简单任务"},
+    "claude-sonnet-4-6": {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6",   "provider": "Anthropic",   "desc": "质量/速度平衡，对话自然"},
+    "claude-opus-4-7":   {"id": "claude-opus-4-7",   "label": "Claude Opus 4.7",     "provider": "Anthropic",   "desc": "最强推理，适合深度长文"},
+    "qwen3-72b":         {"id": "qwen3-72b",         "label": "Qwen3 72B",           "provider": "阿里",         "desc": "中文顶级，性价比极高"},
+    "qwen3-32b":         {"id": "qwen3-32b",         "label": "Qwen3 32B",           "provider": "阿里",         "desc": "轻量均衡，日常够用"},
+    "gemini-2.5-pro":    {"id": "gemini-2.5-pro",    "label": "Gemini 2.5 Pro",      "provider": "Google",       "desc": "长上下文(1M)，适合超长文章"},
 }
+
+# 估算定价（美元/百万token，走代理可能有差异）
+MODEL_PRICES = {
+    "deepseek-v4":       {"input": 0.27,  "output": 1.10},
+    "deepseek-v4-flash": {"input": 0.14,  "output": 0.55},
+    "gpt-4o":            {"input": 2.50,  "output": 10.00},
+    "gpt-4o-mini":       {"input": 0.15,  "output": 0.60},
+    "claude-haiku-4-5":  {"input": 0.80,  "output": 4.00},
+    "claude-sonnet-4-6": {"input": 3.00,  "output": 15.00},
+    "claude-opus-4-7":   {"input": 15.00, "output": 75.00},
+    "qwen3-72b":         {"input": 0.55,  "output": 1.10},
+    "qwen3-32b":         {"input": 0.20,  "output": 0.40},
+    "gemini-2.5-pro":    {"input": 1.25,  "output": 5.00},
+}
+
+# 用量日志（JSONL 格式）
+USAGE_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "usage_log.jsonl")
+os.makedirs(os.path.dirname(USAGE_LOG_PATH), exist_ok=True)
+
+def _record_usage(model: str, prompt_tokens: int, completion_tokens: int, duration_ms: float):
+    """Record API usage to JSONL log."""
+    prices = MODEL_PRICES.get(model, {"input": 0, "output": 0})
+    cost = (prompt_tokens / 1_000_000 * prices["input"] +
+            completion_tokens / 1_000_000 * prices["output"])
+    entry = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "model": model,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "cost_usd": round(cost, 6),
+        "duration_ms": round(duration_ms),
+    }
+    with open(USAGE_LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+def _resolve_model(model_key: str) -> str:
+    """Resolve a model key to actual model ID. Supports legacy shorthand keys."""
+    legacy_map = {"deepseek": "deepseek-v4", "kimi": "deepseek-v4-flash", "gpt4o": "gpt-4o"}
+    if model_key in legacy_map:
+        return legacy_map[model_key]
+    if model_key in MODEL_MAP:
+        return model_key
+    return "deepseek-v4"  # default fallback
+
 FETCH_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -58,8 +161,8 @@ _DEFAULT_SETTINGS = {
     "intro": {
         "enabled": True,
         "template": "欢迎收听播刻。今天我们要聊的是——{topic}。",
-        "speaker": "男声",  # "男声" | "女声" | "双声"
-        "voice_id": None,  # 覆盖默认男/女声
+        "speaker": "主持",  # "主持" | "嘉宾" | "双声"
+        "voice_id": None,  # 覆盖默认男/嘉宾
         "transition_style": "warm",
         "transition_duration": 3.0,
         "transition_volume": 0.15,
@@ -68,7 +171,7 @@ _DEFAULT_SETTINGS = {
         "enabled": True,
         "mode": "template",  # "template" | "ai_summary" | "none"
         "template": "以上就是本期节目的全部内容。感谢收听播刻，我们下期再见。",
-        "speaker": "男声",
+        "speaker": "主持",
         "voice_id": None,
     },
     "body_bgm": {
@@ -77,6 +180,28 @@ _DEFAULT_SETTINGS = {
         "volume": 0.08,
         "custom_path": None,
     },
+    "intro_presets": [
+        {
+            "id": "default",
+            "name": "默认开场白",
+            "template": "欢迎收听播刻。今天我们要聊的是——{topic}。",
+            "speaker": "主持",
+            "voice_id": None,
+            "transition_style": "warm",
+            "transition_duration": 3.0,
+            "transition_volume": 0.15,
+        }
+    ],
+    "outro_presets": [
+        {
+            "id": "default",
+            "name": "默认片尾",
+            "mode": "template",
+            "template": "以上就是本期节目的全部内容。感谢收听播刻，我们下期再见。",
+            "speaker": "主持",
+            "voice_id": None,
+        }
+    ],
 }
 
 def _load_settings() -> dict:
@@ -120,12 +245,12 @@ def validate_dialogue_format(dialogue: list[dict]) -> tuple[bool, bool]:
     """Returns (has_speaker_format, format_valid)."""
     if not dialogue:
         return False, False
-    has_speaker = all(d.get("speaker") in ("男声", "女声") for d in dialogue)
+    has_speaker = all(d.get("speaker") in ("主持", "嘉宾") for d in dialogue)
     all_nonempty = all(len(d.get("text", "").strip()) > 0 for d in dialogue)
     # format_valid: at least 3 exchanges with both speakers present
     speakers = set(d["speaker"] for d in dialogue)
     enough_exchanges = len(dialogue) >= 3
-    both_speakers = speakers == {"男声", "女声"}
+    both_speakers = speakers == {"主持", "嘉宾"}
     return has_speaker, all_nonempty and enough_exchanges and both_speakers
 
 def _check_role_consistency(dialogue: list[dict]) -> dict:
@@ -137,10 +262,10 @@ def _check_role_consistency(dialogue: list[dict]) -> dict:
     for turn in dialogue:
         text = turn.get("text", "")
         speaker = turn.get("speaker", "")
-        if speaker == "男声":
+        if speaker == "主持":
             if any(w in text for w in male_forbidden):
                 male_violations += 1
-        elif speaker == "女声":
+        elif speaker == "嘉宾":
             if any(w in text for w in female_forbidden):
                 female_violations += 1
     total = male_violations + female_violations
@@ -149,6 +274,28 @@ def _check_role_consistency(dialogue: list[dict]) -> dict:
     else:
         logger.info("Role consistency check: clean")
     return {"male_violations": male_violations, "female_violations": female_violations, "total": total}
+
+
+def _compute_text_stats(dialogue: list[dict]) -> dict:
+    """Compute first-tier text statistics for monitoring."""
+    if not dialogue:
+        return {}
+    total_turns = len(dialogue)
+    total_chars = sum(len(t.get("text", "")) for t in dialogue)
+    question_count = sum(1 for t in dialogue if "?" in t.get("text", "") or "？" in t.get("text", ""))
+    exclamation_count = sum(1 for t in dialogue if "!" in t.get("text", "") or "！" in t.get("text", ""))
+    filler_words = ["嗯", "啊", "那个", "这个", "就是说", "说实话", "你看", "等一下", "讲真", "咱就是说"]
+    filler_count = sum(t.get("text", "").count(w) for t in dialogue for w in filler_words)
+    pause_count = sum(t.get("text", "").count("[停顿]") for t in dialogue)
+    emotion_count = sum(1 for t in dialogue if t.get("emotion"))
+    return {
+        "avg_turn_length": round(total_chars / max(1, total_turns), 1),
+        "question_ratio": round(question_count / max(1, total_turns), 4),
+        "exclamation_ratio": round(exclamation_count / max(1, total_turns), 4),
+        "filler_density": round(filler_count / max(1, total_chars), 4),
+        "pause_density": round(pause_count / max(1, total_turns), 4),
+        "emotion_tag_rate": round(emotion_count / max(1, total_turns), 4),
+    }
 
 # ── Structured Dialogue Generation ──
 
@@ -162,7 +309,7 @@ STEP2_SYSTEM = """你是一个专业播客对话编剧。请根据提供的原�
 
 角色设定（双专家模式）：
 
-【男声 — 框架梳理者】
+【主持 — 框架梳理者】
 - 职责：提炼核心观点、做结构性总结、建立论点之间的逻辑连接
 - 语言指纹：
   - 习惯用语："你看""换句话说""如果我们把这个问题拆开来看""这里面有几个层面"
@@ -170,7 +317,7 @@ STEP2_SYSTEM = """你是一个专业播客对话编剧。请根据提供的原�
   - 绝对禁忌：不使用反问句，不说"说实话""讲真""咱就是说"等口语词，不做情绪化的感叹
 - 行为不变量：每当讨论完一个论点，必须用一句话总结其核心结论；在切换话题前，必须用过渡句连接上一个话题
 
-【女声 — 细节追问者】
+【嘉宾 — 细节追问者】
 - 职责：提出尖锐问题、质疑逻辑漏洞、从实践/听众角度追问细节
 - 语言指纹：
   - 习惯用语："说实话""我有点好奇""那岂不是""等一下""这里有个问题"
@@ -179,27 +326,33 @@ STEP2_SYSTEM = """你是一个专业播客对话编剧。请根据提供的原�
 - 行为不变量：每个重要论点必须追问至少两层（是什么→为什么）；核心论点必须追问到第三或第四层（影响/行动）
 
 角色锚点（绝对不可违反——这是防止串台的生命线）：
-1. 男声绝对不说"说实话""我有点好奇""那岂不是""等一下"
-2. 女声绝对不说"你看""换句话说""这里面有几个层面"
-3. 男声的功能是"总结+连接"，女声的功能是"质疑+追问"，两者不可互换
+1. 主持绝对不说"说实话""我有点好奇""那岂不是""等一下"
+2. 嘉宾绝对不说"你看""换句话说""这里面有几个层面"
+3. 主持的功能是"总结+连接"，嘉宾的功能是"质疑+追问"，两者不可互换
 
 角色示范（必须模仿这种说话方式）：
-男声[平静]：你看，这个问题可以拆成两个层面。第一层是市场规模，第二层是盈利模式。
-女声[疑问]：等一下，我有点好奇——如果成本这么高，消费者真的愿意买单吗？
+主持[平静]：你看，这个问题可以拆成两个层面。第一层是市场规模，第二层是盈利模式。
+嘉宾[疑问]：等一下，我有点好奇——如果成本这么高，消费者真的愿意买单吗？
 
 信息核对机制（必须执行）：
 1. 先列出原文中的关键论点、数据、案例（信息核对清单，至少列出 5 条）
 2. 逐条将这些信息融入对话，数据必须精确（原文说"30%"，对话不能说"不少"）
 3. 生成结束后，自查：清单中的每一条是否都有对应讨论？若有遗漏，补充对话回合
 
-追问链设计（女声必须遵循）：
+追问链设计（嘉宾必须遵循）：
 - 第一层【事实层】：这是什么？发生了什么？（确认信息）
 - 第二层【原因层】：为什么会这样？背后的机制是什么？（挖掘原因）
 - 第三层【影响层】：这意味着什么？对谁有影响？（推演后果）
 - 第四层【行动层】：那该怎么办？普通人能做什么？（给出建议）
-每个重要论点，女声至少要追问到第二层；核心论点要追问到第三或第四层。
+每个重要论点，嘉宾至少要追问到第二层；核心论点要追问到第三或第四层。
 
 对话要求：
+
+**=== 结构规则（必须严格遵守）===**
+- **开场顺序**：第一句必须是"嘉宾[情绪]：..."（用提问或感叹引发兴趣），第二句必须是"主持[情绪]：..."（点出话题价值）。禁止主持先开口，禁止"今天我们来说说"等干巴巴的开场。
+- **结尾顺序**：最后一句必须是"主持[情绪]：..."（包含总结词+正式结束语如"感谢收听"）。禁止嘉宾结尾，禁止无结尾突然结束。
+- **词汇呼应**：每轮在提问或回答前，先复述上一轮的1-2个关键词，再展开新内容。例：主持说"这个问题分三个层面"，嘉宾接"你说这三个层面，我最关心的是……"。避免自说自话。
+
 1. 完整覆盖原文内容：
    - 原文提到的每一个重要论点，对话中都必须有对应讨论
    - 原文中的关键数据、时间、比例等，必须精确保留并自然融入对话
@@ -212,15 +365,15 @@ STEP2_SYSTEM = """你是一个专业播客对话编剧。请根据提供的原�
    - 数据引用要准确，不要模糊化
 
 3. 对话推进自然：
-   - 女声负责提出尖锐问题和读者关切，遵循追问链
-   - 男声负责分析、总结、建立逻辑连接和引出下一个议题
+   - 嘉宾负责提出尖锐问题和读者关切，遵循追问链
+   - 主持负责分析、总结、建立逻辑连接和引出下一个议题
    - 允许观点交锋，不要一味附和
    - 话题之间用过渡句自然衔接
 
 4. 角色一致性自查（生成完成后必须执行）：
-   - 检查男声台词中是否出现了"说实话""我有点好奇""那岂不是""等一下"——如果出现，立即删除或重写
-   - 检查女声台词中是否出现了"你看""换句话说""这里面有几个层面"——如果出现，立即删除或重写
-   - 检查是否有角色做了对方的功能（男声质疑、女声总结）——如果有，立即修正
+   - 检查主持台词中是否出现了"说实话""我有点好奇""那岂不是""等一下"——如果出现，立即删除或重写
+   - 检查嘉宾台词中是否出现了"你看""换句话说""这里面有几个层面"——如果出现，立即删除或重写
+   - 检查是否有角色做了对方的功能（主持质疑、嘉宾总结）——如果有，立即修正
 
 5. 情绪标注（必须执行）：
    为每轮对话标注说话者的情绪状态，放在 speaker 之后、冒号之前，用方括号包裹。
@@ -233,7 +386,7 @@ STEP2_SYSTEM = """你是一个专业播客对话编剧。请根据提供的原�
    自由形式：除上述 5 种外，也可使用 Fish Audio 支持的自然语言描述（如 [speaking softly]、[in a hurry]、[with strong emphasis]）。优先使用核心标签，自由形式仅在核心标签无法表达时使用。
 
 6. 口语真实感强制规则（必须执行——这是去AI味的核心）：
-   - **字数控制**：女声每轮 10-25 字（短句为主，像日常提问），男声每轮 20-45 字（分析型长句）
+   - **字数控制**：嘉宾每轮 10-25 字（短句为主，像日常提问），主持每轮 20-45 字（分析型长句）
    - **填充词密度**：每 3-4 轮对话中，至少有一轮在句首或句中加入填充词："嗯……""那个……""说实话啊""等一下等一下"
    - **自我修正**：每 8-10 轮对话中，必须出现一次自我修正："不对，我刚才说错了""等等，这个数字应该是……"
    - **犹豫与重复**：允许自然的犹豫："这个……这个其实挺有意思的"、"就是说……就是说"
@@ -245,10 +398,74 @@ STEP2_SYSTEM = """你是一个专业播客对话编剧。请根据提供的原�
    - 不要在每句话都用标记，只在真正有语气变化的地方使用，自然第一
 
 7. 输出格式：
-   每行 "男声[情绪]：..." 或 "女声[情绪]：..."
+   每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
    情绪标注必须放在 speaker 之后、冒号之前。
    不要序号，不要多余内容
-   开场由女声引入，结尾由男声做总结升华"""
+8. **【强制】结尾结构**：必须以"主持[情绪]：..."结尾，内容包含总结词 + 正式结束语（如"感谢收听"）。禁止无结尾突然结束。"""
+
+STEP2_SYSTEM_ADAPTIVE = """你是一个专业播客对话编剧。请根据提供的原文，创作一段深度双人播客对话。
+
+核心原则：
+- 必须忠实于原文，不得编造原文没有的数据、案例或观点
+- 覆盖原文的所有重要论点、关键数据、典型案例，不要遗漏
+- 对话可以有深度，允许使用专业术语和具体数据
+- 你的首要目标是"信息保真"，而非"制造惊喜"
+- **绝对禁止编造**：如果原文信息量不足以支撑多层追问，允许减少轮数，禁止为了凑轮数而虚构内容
+- **输出上限**：对话总字数不得超过原文字数的 4 倍
+
+角色设定（双专家模式）：
+
+【主持 — 框架梳理者】
+- 职责：提炼核心观点、做结构性总结、建立论点之间的逻辑连接
+- 语言指纹："你看""换句话说""这里面有几个层面"；先给结论再展开
+- 绝对禁忌：不使用反问句，不说"说实话""讲真""咱就是说"等口语词
+- 行为不变量：讨论完一个论点后一句话总结；切换话题前必须有过渡句
+
+【嘉宾 — 细节追问者】
+- 职责：提出尖锐问题、质疑逻辑漏洞、从实践/听众角度追问细节
+- 语言指纹："说实话""我有点好奇""那岂不是""等一下"
+- 绝对禁忌：不做长篇大论的学术总结
+- 行为不变量：根据原文深度灵活追问，原文浅则不必强行深挖
+
+角色锚点：
+1. 主持绝对不说"说实话""我有点好奇""那岂不是""等一下"
+2. 嘉宾绝对不说"你看""换句话说""这里面有几个层面"
+3. 主持的功能是"总结+连接"，嘉宾的功能是"质疑+追问"
+
+对话要求（**按优先级排序**）：
+1. **【强制】开场结构**：必须以"嘉宾[情绪]：..."开场（用提问或感叹引发兴趣），然后"主持[情绪]：..."接话（点出话题价值/悬念）。禁止"今天我们来说说"等干巴巴的开场。
+2. **【强制】结尾结构**：必须以"主持[情绪]：..."结尾，内容包含总结词（总结、总之、以上就是、核心、回顾等）+ 正式结束语（感谢收听、下期再见等）。禁止无结尾突然结束。
+3. **【词汇呼应】提升连贯性**：每轮对话在提问或回答前，先复述或呼应上一轮的 1-2 个关键词，再展开新内容。例如主持说"这个问题分三个层面"，嘉宾回应"你说这三个层面，我最好奇的是第二个……"。避免每轮自说自话、词汇完全不相交。
+4. 完整覆盖原文内容：原文提到的每一个重要论点都必须有对应讨论
+5. 句子长度自然：不要刻意压缩或膨胀，根据信息量决定每轮字数
+6. 追问深度自适应：原文信息量少时，允许只追问 1-2 层；信息量充足时，可以追问到影响层或行动层
+7. 口语标记适度使用：填充词、自我修正、打断、笑声等标记自然出现即可，不要为凑密度而生硬添加
+8. 情绪标注：每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
+9. 输出格式：每行以 "主持[" 或 "嘉宾[" 开头，禁止叙述文或段落"""
+
+STEP2_SYSTEM_LOCKED = """你是一个严格的文本提取助手。你的任务是将原文中的内容直接分配为双人播客对话。
+
+核心原则：
+- **绝对禁止使用原文以外的信息**
+- **绝对禁止推断、猜测、补充背景知识**
+- 你只能使用原文中已经明确写出的观点、数据和案例
+- 如果原文信息量不足以形成多轮对话，允许减少轮数
+- 你的任务不是"创作"，而是"分配"——把原文内容分配给两个角色
+
+=== 结构规则（必须严格遵守） ===
+- 第一句必须是"嘉宾[情绪]：..."，第二句必须是"主持[情绪]：..."
+- 最后一句必须是"主持[情绪]：..."，包含总结+结束语
+
+角色分配规则：
+- 主持：负责承接、总结、过渡
+- 嘉宾：负责提问、引出原文中的关键信息
+
+约束：
+- 每句话必须能在原文中找到对应依据
+- 不要添加原文没有的情绪渲染或夸张表达
+- 情绪标注适度，以"正常"为主
+- 输出格式：每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
+- 每行必须以 "主持[" 或 "嘉宾[" 开头"""
 
 EVAL_SYSTEM = """你是一个播客质量评估专家。请从以下四个维度对生成的对话进行评分（1-5分），
 并严格按照JSON格式输出。
@@ -268,7 +485,7 @@ EVAL_SYSTEM = """你是一个播客质量评估专家。请从以下四个维度
    1分=机械化、书面化，完全不自然
 
 3. role_difference_score（角色差异性）：
-   男声和女声的语气、风格是否有明显差异，是否符合各自的角色设定（男声框架梳理、女声细节追问）。
+   主持和嘉宾的语气、风格是否有明显差异，是否符合各自的角色设定（主持框架梳理、嘉宾细节追问）。
    5分=两个角色区分鲜明，语言指纹清晰
    3分=有一定差异但偶尔混淆
    1分=两个角色几乎没有区别
@@ -282,70 +499,150 @@ EVAL_SYSTEM = """你是一个播客质量评估专家。请从以下四个维度
 输出格式（JSON，不要多余内容）：
 {"content_accuracy_score": N, "colloquial_score": N, "role_difference_score": N, "scene_fit_score": N}"""
 
-def _call_ai(system: str, content: str, model: str | None = None) -> str:
-    """Call LLM via OpenAI-compatible endpoint (avoids anthropic SDK hangs on Windows)."""
+def _call_ai(system: str, content: str, model: str | None = None, temperature: float = 0.7) -> str:
+    """Call LLM via OpenAI-compatible endpoint with retry and robust error handling."""
     import requests as req
-    payload = {
-        "model": model or ZHI_MODEL,
-        "max_tokens": 4096,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": content},
-        ],
-    }
-    resp = req.post(
-        "https://api.zhizengzeng.com/v1/chat/completions",
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {ZHI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        timeout=120,
-    )
-    data = resp.json()
-    choices = data.get("choices", [])
-    if choices:
-        return choices[0]["message"]["content"]
-    raise ValueError("AI returned no text")
+    import time as _time
+    model_name = model or ZHI_MODEL
+    last_error = None
+    for attempt in range(3):
+        payload = {
+            "model": model_name,
+            "max_tokens": 4096,
+            "temperature": temperature,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": content},
+            ],
+        }
+        t_start = _time.time()
+        try:
+            resp = req.post(
+                ZHI_API_BASE,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {ZHI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                timeout=120,
+            )
+        except req.exceptions.Timeout:
+            last_error = f"请求超时（模型={model_name}，第{attempt+1}次）"
+            logger.warning(f"{last_error}，即将重试...")
+            _time.sleep(2 ** attempt)
+            continue
+        except req.exceptions.ConnectionError as e:
+            last_error = f"网络连接失败（模型={model_name}）：{e}"
+            logger.error(last_error)
+            _time.sleep(2 ** attempt)
+            continue
+
+        duration_ms = (_time.time() - t_start) * 1000
+
+        # 检查 HTTP 状态码
+        if resp.status_code != 200:
+            body_preview = resp.text[:300] if resp.text else "(空响应)"
+            last_error = f"API 返回 HTTP {resp.status_code}（模型={model_name}）：{body_preview}"
+            logger.warning(f"{last_error}，第{attempt+1}次")
+            _time.sleep(2 ** attempt)
+            continue
+
+        # 尝试解析 JSON
+        try:
+            data = resp.json()
+        except Exception as e:
+            body_preview = resp.text[:300] if resp.text else "(空响应)"
+            last_error = f"API 返回非 JSON 响应（模型={model_name}）：{e}。原文：{body_preview}"
+            logger.error(last_error)
+            _time.sleep(2 ** attempt)
+            continue
+
+        choices = data.get("choices", [])
+        if choices and choices[0].get("message", {}).get("content"):
+            # 记录用量
+            usage = data.get("usage", {})
+            if usage:
+                try:
+                    _record_usage(model_name,
+                                  usage.get("prompt_tokens", 0),
+                                  usage.get("completion_tokens", 0),
+                                  duration_ms)
+                except Exception:
+                    pass  # 用量记录失败不影响主流程
+            return choices[0]["message"]["content"]
+
+        # 检查是否有 error 字段（OpenAI 格式的错误）
+        error_info = data.get("error", {})
+        if error_info:
+            last_error = f"API 返回错误（模型={model_name}）：{error_info.get('message', error_info)}"
+        else:
+            last_error = f"AI 返回了空的 choices 数组（模型={model_name}）"
+        logger.warning(f"{last_error}，第{attempt+1}次")
+        _time.sleep(2 ** attempt)
+
+    raise RuntimeError(f"AI 调用失败（已重试3次）：{last_error}")
 
 def _call_eval(system: str, content: str) -> str:
     """Separate eval call using EVAL_MODEL via OpenAI-compatible endpoint."""
     import requests as req
-    payload = {
-        "model": EVAL_MODEL,
-        "max_tokens": 1024,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": content},
-        ],
-    }
-    resp = req.post(
-        "https://api.zhizengzeng.com/v1/chat/completions",
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {ZHI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        timeout=60,
-    )
-    data = resp.json()
-    choices = data.get("choices", [])
-    if choices:
-        return choices[0]["message"]["content"]
-    raise ValueError("Eval model returned no text")
+    import time as _time
+    last_error = None
+    for attempt in range(2):
+        payload = {
+            "model": EVAL_MODEL,
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": content},
+            ],
+        }
+        try:
+            resp = req.post(
+                "https://api.zhizengzeng.com/v1/chat/completions",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {ZHI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                timeout=60,
+            )
+        except Exception as e:
+            last_error = str(e)
+            _time.sleep(1)
+            continue
+
+        if resp.status_code != 200:
+            last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            _time.sleep(1)
+            continue
+
+        try:
+            data = resp.json()
+        except Exception as e:
+            last_error = f"非JSON响应: {e}"
+            continue
+
+        choices = data.get("choices", [])
+        if choices and choices[0].get("message", {}).get("content"):
+            return choices[0]["message"]["content"]
+
+        error_info = data.get("error", {})
+        last_error = f"AI错误: {error_info.get('message', error_info)}"
+
+    raise RuntimeError(f"Eval模型调用失败: {last_error}")
 
 
 def parse_dialogue(text: str) -> list[dict]:
     lines = text.strip().split("\n")
     result = []
-    pattern = re.compile(r"^(男声|女声)(?:\[([^\]]+)\])?[：:]\s*(.+)")
+    pattern = re.compile(r"^(主持|嘉宾)(?:\[([^\]]+)\])?[：:]\s*(.+)")
     for line in lines:
         line = line.strip()
         if not line:
             continue
         m = pattern.match(line)
         if m:
-            text_ = m.group(3).strip()
+            text_ = re.sub(r'（出自原文第\d+段）', '', m.group(3).strip()).strip()
             if text_:
                 item = {"speaker": m.group(1), "text": text_}
                 if m.group(2):
@@ -353,22 +650,398 @@ def parse_dialogue(text: str) -> list[dict]:
                 result.append(item)
     return result
 
-def evaluate_dialogue(article: str, dialogue: list[dict]) -> dict:
-    dialogue_text = "\n".join(f"{d['speaker']}：{d['text']}" for d in dialogue)
-    prompt = f"【原文】\n{article[:1000]}\n\n【对话】\n{dialogue_text}\n\n请评分。"
+# ── Objective Evaluation Metrics ──
+
+def _distinct_n(texts: list[str], n: int = 2) -> float:
+    """Compute Distinct-N: ratio of unique n-grams to total n-grams."""
+    ngrams = set()
+    total = 0
+    for text in texts:
+        chars = list(text)
+        for i in range(len(chars) - n + 1):
+            ngrams.add(tuple(chars[i:i + n]))
+            total += 1
+    return round(len(ngrams) / total, 4) if total > 0 else 0.0
+
+
+def _info_density(texts: list[str]) -> float:
+    """Compute Shannon entropy over character distribution."""
+    from collections import Counter
+    chars = []
+    for text in texts:
+        chars.extend(list(text))
+    counter = Counter(chars)
+    total = len(chars)
+    if total == 0:
+        return 0.0
+    entropy = 0.0
+    for count in counter.values():
+        p = count / total
+        entropy -= p * math.log2(p)
+    return round(entropy, 4)
+
+
+def _role_distinction(dialogue: list[dict]) -> float:
+    """Compute role distinction using sentence embeddings (cosine distance)."""
+    male_texts = [d["text"] for d in dialogue if d.get("speaker") == "主持"]
+    female_texts = [d["text"] for d in dialogue if d.get("speaker") == "嘉宾"]
+    if not male_texts or not female_texts:
+        return 0.0
+
+    def _get_emb(text: str) -> list[float]:
+        try:
+            resp = requests.post(
+                "https://api.zhizengzeng.com/v1/embeddings",
+                json={"model": "text-embedding-3-small", "input": [text[:500]]},
+                headers={"Authorization": f"Bearer {ZHI_API_KEY}", "Content-Type": "application/json"},
+                timeout=30,
+            )
+            data = resp.json()
+            return data.get("data", [{}])[0].get("embedding", [])
+        except Exception:
+            return []
+
+    male_emb = _get_emb("\n".join(male_texts))
+    female_emb = _get_emb("\n".join(female_texts))
+    if not male_emb or not female_emb:
+        return 0.0
+
+    dot = sum(a * b for a, b in zip(male_emb, female_emb))
+    na = math.sqrt(sum(a * a for a in male_emb))
+    nb = math.sqrt(sum(b * b for b in female_emb))
+    sim = dot / (na * nb) if na and nb else 0.0
+    return round(1.0 - sim, 4)
+
+
+def _keyword_coverage(article: str, dialogue: list[dict]) -> float:
+    """Compute keyword coverage: ratio of article keywords present in dialogue."""
     try:
+        import jieba
+    except ImportError:
+        return 0.0
+    dialogue_text = "".join(d["text"] for d in dialogue)
+    article_words = set(w for w in jieba.cut(article) if len(w.strip()) >= 2)
+    dialogue_words = set(w for w in jieba.cut(dialogue_text) if len(w.strip()) >= 2)
+    if not article_words:
+        return 0.0
+    return round(len(article_words & dialogue_words) / len(article_words), 4)
+
+
+# ── Second-tier Evaluation Metrics ──
+
+def _numeric_hallucination(article: str, dialogue: list[dict]) -> float:
+    """NER-style: extract numeric expressions (percentages, years, prices) from dialogue,
+    verify each against article. Returns hallucination rate (0-1)."""
+    num_pattern = re.compile(r'(\d+[\.\d]*\s*[%％倍万千百个年日月天小时分秒元美元欧元点版代号度]*)')
+    article_nums = set(num_pattern.findall(article))
+    dialogue_text = "".join(d["text"] for d in dialogue)
+    dialogue_nums = set(num_pattern.findall(dialogue_text))
+    if not dialogue_nums:
+        return 0.0
+    hallucinated = dialogue_nums - article_nums
+    return round(len(hallucinated) / len(dialogue_nums), 4)
+
+
+def _entity_hallucination(article: str, dialogue: list[dict]) -> float:
+    """Extract named entities (people, places, orgs) from dialogue via jieba POS tagging,
+    verify each against article. Returns hallucination rate (0-1)."""
+    import jieba.posseg as pseg
+    dialogue_text = "".join(d["text"] for d in dialogue)
+    try:
+        article_entities = set(w.word for w in pseg.cut(article)
+                               if w.flag in ('nr', 'ns', 'nt', 'nz') and len(w.word) >= 2)
+        dialogue_entities = set(w.word for w in pseg.cut(dialogue_text)
+                                if w.flag in ('nr', 'ns', 'nt', 'nz') and len(w.word) >= 2)
+    except Exception:
+        return 0.0
+    if not dialogue_entities:
+        return 0.0
+    hallucinated = dialogue_entities - article_entities
+    return round(len(hallucinated) / len(dialogue_entities), 4)
+
+
+def _keyword_omission(article: str, dialogue: list[dict]) -> float:
+    """Extract top TF-IDF keywords from article (top 30), measure what fraction
+    is missing from the dialogue. Returns omission rate (0-1)."""
+    try:
+        import jieba.analyse
+    except ImportError:
+        return 0.0
+    dialogue_text = "".join(d["text"] for d in dialogue)
+    keywords = jieba.analyse.extract_tags(article, topK=30, withWeight=False)
+    if not keywords:
+        return 0.0
+    omitted = sum(1 for kw in keywords if kw not in dialogue_text)
+    return round(omitted / len(keywords), 4)
+
+
+def _turn_coherence(dialogue: list[dict]) -> dict:
+    """Measure turn-to-turn lexical coherence using character Jaccard similarity.
+    Coherent conversation about the same topic shares ~0.3-0.6 Jaccard.
+    Too low (<0.15) = topic jumps; too high (>0.7) = repetition."""
+    if len(dialogue) < 3:
+        return {"coherence_score": 0.0, "coherence_std": 0.0}
+    sims = []
+    for i in range(len(dialogue) - 1):
+        chars_i = set(dialogue[i].get("text", ""))
+        chars_j = set(dialogue[i + 1].get("text", ""))
+        if not chars_i or not chars_j:
+            sims.append(0.0)
+        else:
+            sim = len(chars_i & chars_j) / len(chars_i | chars_j)
+            sims.append(sim)
+    avg = sum(sims) / len(sims)
+    var = sum((s - avg) ** 2 for s in sims) / len(sims)
+    return {
+        "coherence_score": round(avg, 4),
+        "coherence_std": round(math.sqrt(var), 4),
+    }
+
+
+def _opening_closing_quality(dialogue: list[dict]) -> dict:
+    """Evaluate opening and closing dialogue quality via rule-based checks.
+    Opening: guest speaks first, host responds, has engagement hook.
+    Closing: host summarizes, has formal ending."""
+    result = {}
+    n = len(dialogue)
+    if n >= 2:
+        result["opening_guest_first"] = dialogue[0].get("speaker") == "嘉宾"
+        result["opening_host_second"] = dialogue[1].get("speaker") == "主持"
+        result["opening_has_hook"] = any(c in dialogue[0].get("text", "") for c in "?!？！")
+    else:
+        result["opening_guest_first"] = False
+        result["opening_host_second"] = False
+        result["opening_has_hook"] = False
+    if n >= 1:
+        last = dialogue[-1]
+        result["closing_host_last"] = last.get("speaker") == "主持"
+        text = last.get("text", "")
+        result["closing_has_summary"] = any(kw in text for kw in
+                                            ["总结", "总之", "以上就是", "核心", "关键",
+                                             "回顾", "所以说", "总而言之", "归结", "一言以蔽之"])
+        result["closing_has_formal_ending"] = any(kw in text for kw in
+                                                  ["感谢收听", "再见", "下期", "下次",
+                                                   "以上就是", "我们下期"])
+    else:
+        result["closing_host_last"] = False
+        result["closing_has_summary"] = False
+        result["closing_has_formal_ending"] = False
+    bool_scores = [v for k, v in result.items() if isinstance(v, bool)]
+    result["opening_closing_score"] = round(sum(bool_scores) / len(bool_scores), 4) if bool_scores else 0.0
+    return result
+
+
+def _chunk_transition_score(chunks_dialogue: list[list[dict]]) -> float:
+    """Evaluate transition quality between chunks using embedding cosine similarity.
+    Measures how smoothly consecutive chunks connect semantically.
+    Returns average cosine similarity (0-1)."""
+    if len(chunks_dialogue) < 2:
+        return 1.0
+    scores = []
+    for i in range(len(chunks_dialogue) - 1):
+        if not chunks_dialogue[i] or not chunks_dialogue[i + 1]:
+            continue
+        last_turn = chunks_dialogue[i][-1].get("text", "")
+        first_turn = chunks_dialogue[i + 1][0].get("text", "")
+        if not last_turn or not first_turn:
+            continue
+        try:
+            resp = requests.post(
+                "https://api.zhizengzeng.com/v1/embeddings",
+                json={"model": "text-embedding-3-small", "input": [last_turn[:500], first_turn[:500]]},
+                headers={"Authorization": f"Bearer {ZHI_API_KEY}", "Content-Type": "application/json"},
+                timeout=30,
+            )
+            data = resp.json()
+            embs = [d["embedding"] for d in data.get("data", [])]
+            if len(embs) == 2:
+                a, b = embs[0], embs[1]
+                dot = sum(x * y for x, y in zip(a, b))
+                na = math.sqrt(sum(x * x for x in a))
+                nb = math.sqrt(sum(y * y for y in b))
+                sim = dot / (na * nb) if na and nb else 0.0
+                scores.append(sim)
+        except Exception:
+            pass
+    if not scores:
+        return 0.0
+    return round(sum(scores) / len(scores), 4)
+
+
+def _sanitize_json(text: str) -> str:
+    """Remove control characters that break json.loads while preserving \n, \r, \t."""
+    cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    cleaned = re.sub(r'\n+', '\n', cleaned)
+    return cleaned.strip()
+
+
+def _evaluate_faithfulness_segment(article_fragment: str, dialogue_fragment: list[dict]) -> float:
+    """Evaluate faithfulness for a single segment."""
+    dialogue_text = "\n".join(f"{d['speaker']}：{d['text']}" for d in dialogue_fragment)
+    system = "你是一个事实一致性评估专家。请从对话中提取事实性陈述，并判断每个陈述是否在原文中有依据。"
+    prompt = f"""原文：
+{article_fragment[:2500]}
+
+对话：
+{dialogue_text[:2500]}
+
+请从对话中提取所有事实性陈述（claims），然后逐一判断每个陈述是否在原文中有依据。
+输出格式（严格的JSON）：
+{{"claims": ["claim1", "claim2"], "supported": [true, false], "faithfulness_score": 0.0-1.0}}
+faithfulness_score = supported为true的数量 / claims总数"""
+
+    try:
+        raw = _call_ai(system, prompt, temperature=0.1)
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            json_text = _sanitize_json(match.group())
+            data = json.loads(json_text)
+            return round(data.get("faithfulness_score", 0.5), 4)
+    except Exception as e:
+        logger.warning(f"Faithfulness segment evaluation failed: {e}")
+    return 0.5
+
+
+def _evaluate_faithfulness(article: str, dialogue: list[dict]) -> float:
+    """RAGAs-style faithfulness: ask LLM to judge if dialogue claims are supported by article.
+    For long texts (>3000 chars), uses segmented evaluation to avoid only checking the first 2000 chars."""
+    if len(article) <= 3000:
+        return _evaluate_faithfulness_segment(article, dialogue)
+
+    # Long text: split into 3 segments and evaluate separately
+    n_segments = 3
+    article_seg_size = len(article) // n_segments
+    dialogue_seg_size = max(1, len(dialogue) // n_segments)
+    scores = []
+
+    for i in range(n_segments):
+        art_start = i * article_seg_size
+        art_end = art_start + article_seg_size + 500 if i < n_segments - 1 else len(article)
+        art_fragment = article[art_start:art_end]
+
+        dlg_start = i * dialogue_seg_size
+        dlg_end = min(dlg_start + dialogue_seg_size + 3, len(dialogue))
+        dlg_fragment = dialogue[dlg_start:dlg_end]
+
+        score = _evaluate_faithfulness_segment(art_fragment, dlg_fragment)
+        scores.append(score)
+
+    return round(sum(scores) / len(scores), 4) if scores else 0.5
+
+
+def _evaluate_q2(article: str, dialogue: list[dict]) -> float:
+    """Q2 method (QG+QA+NLI) for factual consistency. Cost: ~15 LLM calls per dialogue."""
+    dialogue_text = "\n".join(f"{d['speaker']}：{d['text']}" for d in dialogue)
+    # Step 1: Generate questions from dialogue
+    qg_system = "你是一个问题生成专家。请从对话中提取关键事实性问题。"
+    qg_prompt = f"从以下对话中提取最多5个关键事实性问题（只输出问题，每行一个）：\n\n{dialogue_text[:1500]}"
+    try:
+        raw_q = _call_ai(qg_system, qg_prompt, temperature=0.1)
+        questions = [q.strip() for q in raw_q.strip().split("\n") if q.strip() and len(q.strip()) > 5][:5]
+    except Exception as e:
+        logger.warning(f"Q2 question generation failed: {e}")
+        return 0.5
+
+    if not questions:
+        return 0.5
+
+    # Step 2: Answer each question from article
+    qa_system = "你是一个问答专家。请根据原文简要回答问题。"
+    nli_system = "你是一个自然语言推理专家。请判断'对话中的说法'是否与'原文回答'一致。只回答'是'或'否'。"
+    correct = 0
+    total = 0
+    for q in questions:
+        try:
+            qa_prompt = f"原文：\n{article[:1500]}\n\n问题：{q}\n\n答案："
+            answer = _call_ai(qa_system, qa_prompt, temperature=0.1).strip()
+
+            nli_prompt = f"对话中的说法：{q}\n原文中的答案：{answer}\n\n两者是否一致？只回答'是'或'否'。"
+            result = _call_ai(nli_system, nli_prompt, temperature=0.1).strip()
+            total += 1
+            if "是" in result:
+                correct += 1
+        except Exception as e:
+            logger.warning(f"Q2 evaluation step failed for question '{q}': {e}")
+            total += 1
+
+    return round(correct / total, 4) if total > 0 else 0.5
+
+
+def evaluate_dialogue(article: str, dialogue: list[dict], use_q2: bool = False) -> dict:
+    """Comprehensive evaluation with first-tier + second-tier metrics."""
+    texts = [d["text"] for d in dialogue]
+    dialogue_text = "\n".join(f"{d['speaker']}：{d['text']}" for d in dialogue)
+
+    # First-tier objective metrics (fast, zero LLM cost)
+    distinct_1 = _distinct_n(texts, 1)
+    distinct_2 = _distinct_n(texts, 2)
+    info_dens = _info_density(texts)
+    role_dist = _role_distinction(dialogue)
+    coverage = _keyword_coverage(article, dialogue)
+
+    # Second-tier metrics (fast, rule-based / local NLP)
+    numeric_hall = _numeric_hallucination(article, dialogue)
+    entity_hall = _entity_hallucination(article, dialogue)
+    omission = _keyword_omission(article, dialogue)
+    coherence = _turn_coherence(dialogue)
+    oc_quality = _opening_closing_quality(dialogue)
+
+    # LLM-based faithfulness (1 call)
+    faithfulness = _evaluate_faithfulness(article, dialogue)
+
+    # Deep Q2 evaluation (~15 calls, expensive, optional)
+    q2_score = _evaluate_q2(article, dialogue) if use_q2 else None
+
+    # Legacy LLM evaluation (backward compatibility)
+    legacy_scores = {"content_accuracy_score": 3, "colloquial_score": 3,
+                     "role_difference_score": 3, "scene_fit_score": 3}
+    try:
+        prompt = f"【原文】\n{article[:1000]}\n\n【对话】\n{dialogue_text}\n\n请评分。"
         raw = _call_eval(EVAL_SYSTEM, prompt)
         scores = json.loads(raw.strip())
-        return {
+        legacy_scores = {
             "content_accuracy_score": max(1, min(5, scores.get("content_accuracy_score", 3))),
             "colloquial_score": max(1, min(5, scores.get("colloquial_score", 3))),
             "role_difference_score": max(1, min(5, scores.get("role_difference_score", 3))),
             "scene_fit_score": max(1, min(5, scores.get("scene_fit_score", 3))),
         }
     except Exception as e:
-        logger.warning(f"Self-evaluation failed: {e}")
-        return {"content_accuracy_score": 3, "colloquial_score": 3,
-                "role_difference_score": 3, "scene_fit_score": 3}
+        logger.warning(f"Legacy evaluation failed: {e}")
+
+    result = {
+        # Legacy scores (backward compatible)
+        **legacy_scores,
+        # First-tier objective metrics
+        "distinct_1": distinct_1,
+        "distinct_2": distinct_2,
+        "info_density": info_dens,
+        "role_distinction": role_dist,
+        "keyword_coverage": coverage,
+        "faithfulness": faithfulness,
+        # Second-tier evaluation metrics
+        "numeric_hallucination_rate": numeric_hall,
+        "entity_hallucination_rate": entity_hall,
+        "keyword_omission_rate": omission,
+        "coherence_score": coherence.get("coherence_score", 0.0),
+        "coherence_std": coherence.get("coherence_std", 0.0),
+        "opening_closing_score": oc_quality.get("opening_closing_score", 0.0),
+        "opening_guest_first": oc_quality.get("opening_guest_first", False),
+        "closing_host_last": oc_quality.get("closing_host_last", False),
+        "opening_has_hook": oc_quality.get("opening_has_hook", False),
+        "closing_has_summary": oc_quality.get("closing_has_summary", False),
+        "closing_has_formal_ending": oc_quality.get("closing_has_formal_ending", False),
+    }
+    if q2_score is not None:
+        result["q2_score"] = q2_score
+
+    logger.info(f"Evaluation metrics: distinct_1={distinct_1}, distinct_2={distinct_2}, "
+                f"info_density={info_dens}, role_distinction={role_dist}, "
+                f"coverage={coverage}, faithfulness={faithfulness}"
+                f" | T2: numeric_hall={numeric_hall}, entity_hall={entity_hall}, "
+                f"omission={omission}, coherence={coherence.get('coherence_score')}, "
+                f"oc_score={oc_quality.get('opening_closing_score')}"
+                + (f", q2={q2_score}" if q2_score is not None else ""))
+    return result
 
 def _split_text_chunks(text: str, chunk_size: int = 5000, overlap: int = 500) -> list[str]:
     """Split long text into overlapping chunks at paragraph boundaries."""
@@ -418,28 +1091,29 @@ STEP2_CONTINUATION = """你是一个专业播客对话编剧。当前正在根�
 
 角色设定（双专家模式——**再次强调，角色绝对不可混淆**）：
 
-【男声 — 框架梳理者】
+【主持 — 框架梳理者】
 - 语言指纹："你看""换句话说""这里面有几个层面"；先给结论再展开；禁忌反问句和口语词
 - 行为不变量：讨论完一个论点必须一句话总结；切换话题前必须有过渡句
 - **绝对禁忌**：绝不说"说实话""我有点好奇""那岂不是""等一下"
 
-【女声 — 细节追问者】
+【嘉宾 — 细节追问者】
 - 语言指纹："说实话""我有点好奇""那岂不是""等一下"；从个人体验出发提问；禁忌长篇总结
 - 行为不变量：每个重要论点至少追问两层；核心论点追问到影响层或行动层
 - **绝对禁忌**：绝不说"你看""换句话说""这里面有几个层面"
 
 角色锚点（这是防止串台的生命线，必须遵守）：
-1. 男声的功能是"总结+连接"，女声的功能是"质疑+追问"，两者不可互换
-2. 如果男声开始质疑或女声开始总结，说明已经串台，必须立即修正
+1. 主持的功能是"总结+连接"，嘉宾的功能是"质疑+追问"，两者不可互换
+2. 如果主持开始质疑或嘉宾开始总结，说明已经串台，必须立即修正
 
 对话要求：
 1. 完整覆盖本段原文的所有重要论点、关键数据和典型案例
 2. 句子自然流畅，允许使用专业术语
-3. 女声提出问题和质疑，男声分析总结并建立逻辑连接——功能不可互换
-4. 情绪标注（必须执行）：为每轮对话标注情绪，格式 "男声[情绪]：..." 或 "女声[情绪]：..."
+3. 嘉宾提出问题和质疑，主持分析总结并建立逻辑连接——功能不可互换
+4. 情绪标注（必须执行）：为每轮对话标注情绪，格式 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
    核心标签：正常（默认）、兴奋、磁性、放慢、悲伤。也可使用 Fish Audio 自然语言描述作为自由形式标签。
 5. 口语真实感强制规则（必须执行——去AI味）：
-   - **字数控制**：女声每轮 10-25 字，男声每轮 20-45 字
+   - **字数弹性**：根据原文信息量自然决定每轮字数。关键论点可充分展开，嘉宾每轮 15-40 字，主持每轮 30-80 字。不要因为担心篇幅而压缩内容。
+   - **充分展开**：本段是长文的一部分，信息量大。遇到关键数据、典型案例、逻辑链条时，请逐层拆解，不要一句话带过。
    - **填充词密度**：每 3-4 轮中至少一轮加入填充词："嗯……""那个……""等一下等一下"
    - **自我修正**：每 8-10 轮必须出现一次自我修正
    - **打断设计**：每 6-8 轮设计一次打断，用"等一下""不不不"插入，被打断方用省略号结尾
@@ -447,7 +1121,7 @@ STEP2_CONTINUATION = """你是一个专业播客对话编剧。当前正在根�
    - 句中停顿用 [停顿] 标记，轻声用 [轻声]...[/轻声] 标记
    - **绝对禁止**：书面化长定语、排比句、新闻播报腔
    - 不要每句都用标记，自然第一
-6. 输出格式：每行 "男声[情绪]：..." 或 "女声[情绪]：..."
+6. 输出格式：每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
 7. 不要序号，不要多余内容"""
 
 OUTLINE_SYSTEM = """你是一个文章结构分析师。请仔细阅读以下原文，提取出文章的结构化大纲。
@@ -545,10 +1219,77 @@ def _split_by_outline(clean_text: str, outline: list[dict]) -> list[tuple[str, d
     return chunks
 
 
+def _duration_hint(duration: str | None) -> str:
+    """Return a Chinese duration constraint hint for the LLM prompt."""
+    if duration == "short":
+        return "对话总时长控制在 5-15 分钟左右，不要过于冗长，保持精悍紧凑。"
+    if duration == "long":
+        return "对话总时长控制在 15-30 分钟左右，允许充分展开论述，保持深度。"
+    if duration == "extra_long":
+        return "对话总时长控制在 30-60 分钟左右，每个论点都需要充分展开，加入具体案例、数据解读和自然的过渡衔接，保持深度但不冗长。"
+    if duration == "ultra_long":
+        return "对话总时长控制在 60 分钟以上，要求对每个论点进行极其深入的探讨，加入丰富的案例、数据解读、背景延伸和互动讨论，充分挖掘原文的每一个细节，允许适度的发散和联想。"
+    return ""
+
+
+_FORMAT_EXAMPLE = """\n【格式示例——必须严格模仿，这是防止解析失败的底线】
+嘉宾[兴奋]：说实话，看到这个数据我有点惊讶——
+主持[正常]：你看，这背后其实有两个层面。
+嘉宾[疑问]：等一下，那普通人能参与吗？
+主持[放慢]：这个问题问得好，我们先来看第一层……
+
+绝对禁止：写成叙述文、段落、散文或带序号；每行必须以 "主持[" 或 "嘉宾[" 开头。"""
+
+
+def _resolve_prompt_mode(length: int, prompt_mode: str) -> str:
+    """Auto-select prompt_mode based on text length if set to 'auto'."""
+    if prompt_mode != "auto":
+        return prompt_mode
+    if length < 500:
+        return "locked"
+    if length <= 2000:
+        return "adaptive"
+    return "adaptive"
+
+
+def _select_system_prompt(prompt_mode: str, is_first: bool = True) -> str:
+    """Select system prompt based on mode and whether it's the first chunk."""
+    if prompt_mode == "adaptive":
+        return STEP2_SYSTEM_ADAPTIVE if is_first else STEP2_CONTINUATION
+    if prompt_mode == "locked":
+        return STEP2_SYSTEM_LOCKED
+    # original, citation, etc.
+    return STEP2_SYSTEM if is_first else STEP2_CONTINUATION
+
+
 def _generate_single_dialogue(text_for_llm: str, system: str = STEP2_SYSTEM,
                               context: str = "", is_continuation: bool = False,
-                              model: str | None = None) -> str:
+                              model: str | None = None, duration: str | None = None,
+                              format_retry: bool = False,
+                              prompt_mode: str = "original",
+                              temperature: float = 0.7) -> str:
     """Generate raw dialogue text from a text chunk."""
+    # Select system prompt based on mode
+    if prompt_mode == "adaptive":
+        system = STEP2_SYSTEM_ADAPTIVE
+    elif prompt_mode == "locked":
+        system = STEP2_SYSTEM_LOCKED
+        temperature = 0.2
+    # "original" and "citation" use the passed system (default STEP2_SYSTEM)
+
+    duration_line = _duration_hint(duration)
+    format_reminder = ""
+    if format_retry:
+        format_reminder = "\n\n【重试——上一次的输出格式不正确，未能解析为对话。请务必严格按照以下示例格式输出，每行以 主持[情绪]： 或 嘉宾[情绪]： 开头，绝不允许写成叙述文或段落。】"
+
+    expansion_hint = ""
+    if len(text_for_llm) > 3000:
+        expansion_hint = "\n\n【展开要求】本段原文信息量丰富，请充分展开讨论。关键数据要逐层解读，典型案例要完整还原，逻辑链条要逐步拆解。不要急于总结，不要一句话带过。"
+
+    citation_hint = ""
+    if prompt_mode == "citation":
+        citation_hint = "\n\n【引用强制】每句话后面必须标注出自原文的段落编号，格式为（出自原文第X段）。这个标注仅用于后续校对，不参与对话朗读。"
+
     if context:
         prompt = f"""前文对话（请自然延续，不要重复。开头请用一句简短的过渡句承接上文，然后进入本段正题）：
 {context}
@@ -560,9 +1301,10 @@ def _generate_single_dialogue(text_for_llm: str, system: str = STEP2_SYSTEM,
 1. 开头用一句过渡句自然承接上文，然后进入本段内容
 2. 覆盖本段原文的所有重要论点、关键数据和典型案例
 3. 句子自然流畅，允许使用专业术语
-4. 女声提出问题和质疑，男声分析总结
-5. 输出格式：每行 "男声：..." 或 "女声：..."
-6. 不要序号，不要多余内容"""
+4. 嘉宾提出问题和质疑，主持分析总结
+5. 输出格式：每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
+6. 不要序号，不要多余内容
+7. 每行必须以 "主持[" 或 "嘉宾[" 开头，禁止叙述文或段落{_FORMAT_EXAMPLE}{f"\n8. {duration_line}" if duration_line else ""}{citation_hint}{expansion_hint}{format_reminder}"""
     else:
         prompt = f"""原文如下：
 {text_for_llm}
@@ -570,11 +1312,12 @@ def _generate_single_dialogue(text_for_llm: str, system: str = STEP2_SYSTEM,
 请根据以上原文创作双人播客对话。要求：
 1. 完整覆盖原文所有重要论点、关键数据和典型案例
 2. 句子自然流畅，允许使用专业术语
-3. 女声提出问题和质疑，男声分析总结
-4. 输出格式：每行 "男声：..." 或 "女声：..."
-5. 不要编号，不要多余内容"""
+3. 嘉宾提出问题和质疑，主持分析总结
+4. 输出格式：每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
+5. 不要编号，不要多余内容
+6. 每行必须以 "主持[" 或 "嘉宾[" 开头，禁止叙述文或段落{_FORMAT_EXAMPLE}{f"\n7. {duration_line}" if duration_line else ""}{citation_hint}{expansion_hint}{format_reminder}"""
 
-    return _call_ai(system, prompt, model=model)
+    return _call_ai(system, prompt, model=model, temperature=temperature)
 
 
 def _deduplicate_overlap(prev_dialogue: list[dict], new_dialogue: list[dict]) -> list[dict]:
@@ -591,20 +1334,168 @@ def _deduplicate_overlap(prev_dialogue: list[dict], new_dialogue: list[dict]) ->
     return new_dialogue[overlap_count:]
 
 
+def _semantic_split_chunks(text: str, chunk_size: int = 4500, overlap: int = 600, api_key: str | None = None) -> list[str]:
+    """Semantic chunking: split text at topic boundaries using sentence embeddings.
+    Returns overlapping chunks aligned with semantic boundaries."""
+    api_key = api_key or ZHI_API_KEY
+    if not api_key:
+        logger.warning("No API key for semantic splitting, falling back to text chunks")
+        return _split_text_chunks(text, chunk_size=chunk_size, overlap=overlap)
+
+    # 1. Split into sentences
+    raw = re.split(r'([。！？\n])', text)
+    sentences = []
+    buf = ""
+    for part in raw:
+        buf += part
+        if part in "。！？\n":
+            s = buf.strip()
+            if s:
+                sentences.append(s)
+            buf = ""
+    if buf.strip():
+        sentences.append(buf.strip())
+
+    if not sentences:
+        return [text]
+
+    # 2. Get embeddings in batches
+    def _get_embeddings(sents: list[str]) -> list[list[float]]:
+        try:
+            resp = requests.post(
+                "https://api.zhizengzeng.com/v1/embeddings",
+                json={"model": "text-embedding-3-small", "input": sents},
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                timeout=60,
+            )
+            data = resp.json()
+            return [d["embedding"] for d in data.get("data", [])]
+        except Exception as e:
+            logger.warning(f"Embedding API failed: {e}")
+            return []
+
+    all_embeddings = []
+    batch_size = 50
+    for i in range(0, len(sentences), batch_size):
+        batch = sentences[i:i+batch_size]
+        embs = _get_embeddings(batch)
+        if not embs:
+            return _split_text_chunks(text, chunk_size=chunk_size, overlap=overlap)
+        all_embeddings.extend(embs)
+
+    if len(all_embeddings) != len(sentences):
+        return _split_text_chunks(text, chunk_size=chunk_size, overlap=overlap)
+
+    # 3. Compute cosine similarities between adjacent sentences
+    import math
+    def _cosine(a, b):
+        dot = sum(x*y for x, y in zip(a, b))
+        na = math.sqrt(sum(x*x for x in a))
+        nb = math.sqrt(sum(x*x for x in b))
+        return dot / (na * nb) if na and nb else 0.0
+
+    sims = [_cosine(all_embeddings[i], all_embeddings[i+1]) for i in range(len(all_embeddings)-1)]
+    if not sims:
+        return [text]
+
+    # 4. Determine split points where similarity is low
+    # Use a percentile-based threshold (bottom 25%)
+    sorted_sims = sorted(sims)
+    threshold = sorted_sims[max(0, len(sorted_sims)//4)] if len(sorted_sims) >= 4 else 0.5
+
+    split_indices = [0]
+    current_len = len(sentences[0])
+    for i, sim in enumerate(sims):
+        sent_len = len(sentences[i+1])
+        # Force split if chunk is big enough and similarity is low
+        if current_len >= chunk_size and sim <= threshold:
+            split_indices.append(i+1)
+            current_len = sent_len
+        elif current_len >= chunk_size * 1.5:
+            # Hard cap to avoid oversized chunks
+            split_indices.append(i+1)
+            current_len = sent_len
+        else:
+            current_len += sent_len
+
+    split_indices.append(len(sentences))
+
+    # 5. Build chunks with overlap
+    chunks = []
+    for i in range(len(split_indices)-1):
+        start = split_indices[i]
+        end = split_indices[i+1]
+        # Back up for overlap
+        if i > 0 and start > 0:
+            overlap_start = max(0, start - 2)
+            chunk_text = "".join(sentences[overlap_start:end])
+        else:
+            chunk_text = "".join(sentences[start:end])
+        if chunk_text.strip():
+            chunks.append(chunk_text.strip())
+
+    return chunks if chunks else [text]
+
+
+def _extract_native_headers(text: str) -> list[tuple[int, int, str]]:
+    """Extract native section headers from original text.
+    Returns list of (start_idx, end_idx, header_text) sorted by position."""
+    headers = []
+    # Markdown headers: ## Title
+    for m in re.finditer(r'^#{2,4}\s+(.+)$', text, re.MULTILINE):
+        headers.append((m.start(), m.end(), m.group(1).strip()))
+    # Chinese numerals: 一、Title or （一）Title
+    for m in re.finditer(r'^[一二三四五六七八九十]+[、．.]\s*(.+)$', text, re.MULTILINE):
+        headers.append((m.start(), m.end(), m.group(1).strip()))
+    for m in re.finditer(r'^（[一二三四五六七八九十]+）\s*(.+)$', text, re.MULTILINE):
+        headers.append((m.start(), m.end(), m.group(1).strip()))
+    # Arabic numerals: 1. Title or 1、Title
+    for m in re.finditer(r'^\d+[、.．]\s*(.+)$', text, re.MULTILINE):
+        headers.append((m.start(), m.end(), m.group(1).strip()))
+    # Named keywords as standalone lines
+    named_keywords = ["引言", "背景", "现状", "分析", "案例", "结论", "总结", "展望", "建议", "核心", "趋势", "数据", "影响", "观点", "原因", "结果"]
+    for kw in named_keywords:
+        for m in re.finditer(r'^(' + re.escape(kw) + r')\s*$', text, re.MULTILINE):
+            headers.append((m.start(), m.end(), m.group(1).strip()))
+
+    headers.sort(key=lambda x: x[0])
+    # Remove overlaps (keep earliest)
+    cleaned = []
+    last_end = -1
+    for start, end, title in headers:
+        if start >= last_end:
+            cleaned.append((start, end, title))
+            last_end = end
+    return cleaned
+
+
+def _hybrid_split_chunks(text: str, chunk_size: int = 4500, overlap: int = 600) -> list[str]:
+    """Hybrid strategy: use native headers if present, else fall back to balanced text splitting."""
+    headers = _extract_native_headers(text)
+    if len(headers) >= 2:
+        logger.info(f"Hybrid split: found {len(headers)} native headers, using structure-based splitting")
+        chunks = []
+        for i, (start, end, title) in enumerate(headers):
+            if i + 1 < len(headers):
+                next_start = headers[i + 1][0]
+                section_text = text[start:next_start].strip()
+            else:
+                section_text = text[start:].strip()
+            if len(section_text) > 100:
+                chunks.append(section_text)
+        if chunks:
+            return chunks
+
+    logger.info("Hybrid split: no native headers found, falling back to balanced splitting")
+    return _split_text_chunks(text, chunk_size=chunk_size, overlap=overlap)
+
+
 def _has_clear_structure(text: str) -> bool:
     """Detect if text has clear section headers suitable for outline-first."""
-    # Markdown headers
-    if re.search(r'^#{2,4}\s+', text, re.MULTILINE):
+    headers = _extract_native_headers(text)
+    if len(headers) >= 3:
         return True
-    # Chinese section markers: 一、 二、 or （一） （二）
-    if re.search(r'^[一二三四五六七八九十]+[、．.]\s*', text, re.MULTILINE):
-        return True
-    if re.search(r'^（[一二三四五六七八九十]+）', text, re.MULTILINE):
-        return True
-    # Numbered sections: 1. 2. or 1、
-    if len(re.findall(r'^\d+[、.．]\s*\S', text, re.MULTILINE)) >= 3:
-        return True
-    # Named sections like 引言, 结论, 背景, 总结
+    # Fallback: check for repeated keywords in first 3000 chars
     section_keywords = ["引言", "背景", "现状", "分析", "案例", "结论", "总结", "展望", "建议", "核心", "趋势", "数据", "影响", "观点", "原因", "结果"]
     matches = sum(1 for kw in section_keywords if kw in text[:3000])
     if matches >= 3:
@@ -612,110 +1503,127 @@ def _has_clear_structure(text: str) -> bool:
     return False
 
 
-def generate_structured_dialogue(clean_text: str, opening_text: str = "", model: str | None = None) -> tuple[list[dict], dict, int]:
+def generate_structured_dialogue(clean_text: str, opening_text: str = "", model: str | None = None, duration: str | None = None, split_strategy: str = "original", prompt_mode: str = "original") -> tuple[list[dict], dict, int]:
     t0 = time.time()
     length = len(clean_text)
 
-    # Dynamic threshold: <4000 always single-shot; 4000-8000 depends on structure; >8000 always outline-first
-    use_outline = length > 8000 or (length > 4000 and _has_clear_structure(clean_text))
-    strategy = "outline-first" if use_outline else "single-shot"
-    logger.info(f"Generation strategy: {strategy} for {length} chars (structure={_has_clear_structure(clean_text)})")
+    # Auto-select prompt_mode based on text length
+    resolved_mode = _resolve_prompt_mode(length, prompt_mode)
+    if resolved_mode != prompt_mode:
+        logger.info(f"Auto-switched prompt_mode: {prompt_mode} -> {resolved_mode} for {length} chars")
+        prompt_mode = resolved_mode
 
-    if not use_outline:
-        # Single-shot for short or unstructured articles
-        if opening_text:
-            prompt = f"""原文如下：\n{clean_text}\n\n已有开场对话（请延续以下开场白的风格和节奏，从开场之后继续生成，不要重复开场内容）：\n{opening_text}\n\n请根据以上原文创作双人播客对话，从开场之后继续。要求：\n1. 正文对话的风格、节奏、语气应与开场白保持一致，避免风格突变\n2. 完整覆盖原文所有重要论点、关键数据和典型案例\n3. 句子自然流畅，允许使用专业术语\n4. 女声提出问题和质疑，男声分析总结\n5. 输出格式：每行 "男声：..." 或 "女声：..."\n6. 不要编号，不要多余内容"""
-            dialogue_raw = _call_ai(STEP2_SYSTEM, prompt, model=model)
-        else:
-            dialogue_raw = _generate_single_dialogue(clean_text, model=model)
+    # Strategy selection: outline-first deprecated due to poor coverage (8% on 14k chars).
+    # All texts now use single-shot or fallback chunking for better fidelity.
+    use_outline = False
+    strategy = "single-shot" if length <= 4000 else "chunked-fallback"
+    logger.info(f"Generation strategy: {strategy} for {length} chars (duration={duration}, split={split_strategy}, prompt={prompt_mode})")
+
+    if length <= 4000:
+        # Single-shot for short texts
+        max_attempts = 2
+        dialogue = []
+        dialogue_raw = ""
+        for attempt in range(1, max_attempts + 1):
+            try:
+                if opening_text:
+                    prompt = f"""原文如下：\n{clean_text}\n\n已有开场对话（请延续以下开场白的风格和节奏，从开场之后继续生成，不要重复开场内容）：\n{opening_text}\n\n请根据以上原文创作双人播客对话，从开场之后继续。要求：\n1. 正文对话的风格、节奏、语气应与开场白保持一致，避免风格突变\n2. 完整覆盖原文所有重要论点、关键数据和典型案例\n3. 句子自然流畅，允许使用专业术语\n4. 嘉宾提出问题和质疑，主持分析总结\n5. 输出格式：每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."\n6. 不要编号，不要多余内容\n7. 每行必须以 "主持[" 或 "嘉宾[" 开头，禁止叙述文或段落{_FORMAT_EXAMPLE}{f"\n8. {_duration_hint(duration)}" if duration and duration != "free" else ""}{"\n\n【重试——上一次的输出格式不正确，请务必严格按照上述示例格式输出。】" if attempt > 1 else ""}"""
+                    system = _select_system_prompt(prompt_mode, is_first=True)
+                    raw = _call_ai(system, prompt, model=model, temperature=(0.2 if prompt_mode == "locked" else 0.7))
+                else:
+                    raw = _generate_single_dialogue(clean_text, model=model, duration=duration, format_retry=(attempt > 1), prompt_mode=prompt_mode)
+                dialogue = parse_dialogue(raw)
+                has_speaker, format_valid = validate_dialogue_format(dialogue)
+                if dialogue and len(dialogue) >= 3 and format_valid:
+                    dialogue_raw = raw
+                    break
+                logger.warning(f"Single-shot attempt {attempt} produced invalid format ({len(dialogue)} turns, valid={format_valid}), retrying...")
+            except Exception as e:
+                logger.warning(f"Single-shot attempt {attempt} failed: {e}")
+        if not dialogue or len(dialogue) < 3:
+            raise ValueError("Failed to generate valid dialogue after retries")
         llm_time = int((time.time() - t0) * 1000)
-        dialogue = parse_dialogue(dialogue_raw)
-        if not dialogue:
-            raise ValueError("Failed to parse dialogue from AI response")
         logger.info(f"Generated {len(dialogue)} dialogue turns (LLM: {llm_time}ms)")
         _check_role_consistency(dialogue)
         eval_scores = evaluate_dialogue(clean_text, dialogue)
         logger.info(f"Self-evaluation scores: {eval_scores}")
+
+        # Write metrics for single-shot path too
+        output_length = sum(len(d["text"]) for d in dialogue)
+        text_stats = _compute_text_stats(dialogue)
+        role_violations = _check_role_consistency(dialogue)
+        _write_metrics(METRICS_GENERATION_PATH, {
+            "request_id": str(uuid.uuid4()), "session_id": None,
+            "model": model, "prompt_mode": prompt_mode, "split_strategy": "single-shot",
+            "chunk_count": None,
+            "total_turns": len(dialogue), "output_length_chars": output_length,
+            "expansion_ratio": round(output_length / max(1, length), 4),
+            "llm_time_ms": llm_time,
+            "keyword_coverage": eval_scores.get("keyword_coverage"),
+            "faithfulness": eval_scores.get("faithfulness"),
+            "q2_score": eval_scores.get("q2_score"),
+            "role_distinction": eval_scores.get("role_distinction"),
+            "distinct_1": eval_scores.get("distinct_1"),
+            "distinct_2": eval_scores.get("distinct_2"),
+            "content_accuracy_score": eval_scores.get("content_accuracy_score"),
+            "colloquial_score": eval_scores.get("colloquial_score"),
+            "role_difference_score": eval_scores.get("role_difference_score"),
+            "scene_fit_score": eval_scores.get("scene_fit_score"),
+            "format_valid": True, "has_speaker_format": True,
+            "role_violation_rate": round(role_violations["total"] / max(1, len(dialogue)), 4),
+            "numeric_hallucination_rate": eval_scores.get("numeric_hallucination_rate"),
+            "entity_hallucination_rate": eval_scores.get("entity_hallucination_rate"),
+            "keyword_omission_rate": eval_scores.get("keyword_omission_rate"),
+            "coherence_score": eval_scores.get("coherence_score"),
+            "coherence_std": eval_scores.get("coherence_std"),
+            "opening_closing_score": eval_scores.get("opening_closing_score"),
+            "opening_guest_first": eval_scores.get("opening_guest_first"),
+            "closing_host_last": eval_scores.get("closing_host_last"),
+            **text_stats,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+
         return dialogue, eval_scores, llm_time
 
-    # Outline-first generation for long articles
-    outline = extract_outline(clean_text)
-    if outline:
-        section_chunks = _split_by_outline(clean_text, outline)
-        if section_chunks:
-            logger.info(f"Outline-first: {len(outline)} sections, {len(section_chunks)} mapped to text")
-            all_dialogue = []
-            prev_context = opening_text
-            total_llm_time = 0
-
-            for idx, (section_text, section_info) in enumerate(section_chunks):
-                chunk_t0 = time.time()
-                kp_text = "\n".join(f"- {kp}" for kp in section_info.get("key_points", []))
-                transition_hint = "开头请用一句简短的过渡句自然承接上文，然后进入本段正题。" if idx > 0 else ""
-                prompt = f"""原文段落如下：
-{section_text}
-
-本段核心要点（必须覆盖）：
-{kp_text}
-
-前文对话（请自然延续，不要重复）：
-{prev_context or "（无）"}
-
-请根据以上原文创作双人播客对话。要求：
-1. 完整覆盖本段的所有核心要点
-2. 句子自然流畅，允许使用专业术语
-3. 女声提出问题和质疑，男声分析总结
-4. 输出格式：每行 "男声：..." 或 "女声：..."
-5. 不要编号，不要多余内容
-{transition_hint}"""
-
-                system = STEP2_SYSTEM if idx == 0 else STEP2_CONTINUATION
-                dialogue_raw = _call_ai(system, prompt)
-                chunk_time = int((time.time() - chunk_t0) * 1000)
-                total_llm_time += chunk_time
-
-                chunk_dialogue = parse_dialogue(dialogue_raw)
-                if not chunk_dialogue:
-                    logger.warning(f"Section {idx + 1} produced no dialogue, skipping")
-                    continue
-                _check_role_consistency(chunk_dialogue)
-
-                if all_dialogue:
-                    chunk_dialogue = _deduplicate_overlap(all_dialogue, chunk_dialogue)
-
-                all_dialogue.extend(chunk_dialogue)
-                if chunk_dialogue:
-                    prev_context = "\n".join(f"{d['speaker']}：{d['text']}" for d in chunk_dialogue[-2:])
-
-                logger.info(f"Section {idx + 1}/{len(section_chunks)}: {len(chunk_dialogue)} turns ({chunk_time}ms)")
-
-            if all_dialogue:
-                logger.info(f"Total {len(all_dialogue)} dialogue turns from {len(section_chunks)} sections (LLM: {total_llm_time}ms)")
-                eval_scores = evaluate_dialogue(clean_text, all_dialogue)
-                logger.info(f"Self-evaluation scores: {eval_scores}")
-                return all_dialogue, eval_scores, total_llm_time
-
-    # Fallback: simple chunking if outline extraction failed or sections couldn't be mapped
-    logger.info("Outline-first failed, falling back to simple chunking")
-    chunks = _split_text_chunks(clean_text, chunk_size=5000, overlap=500)
+    # Long texts (>4000): use fallback chunking directly (outline-first deprecated)
+    chunk_size = 3500  # Balanced: enough context per chunk, more chunks for better coverage
+    overlap = 600
+    if split_strategy == "semantic":
+        chunks = _semantic_split_chunks(clean_text, chunk_size=chunk_size, overlap=overlap)
+    elif split_strategy == "hybrid":
+        chunks = _hybrid_split_chunks(clean_text, chunk_size=chunk_size, overlap=overlap)
+    else:
+        chunks = _split_text_chunks(clean_text, chunk_size=chunk_size, overlap=overlap)
     logger.info(f"Long text ({len(clean_text)} chars) split into {len(chunks)} chunks")
 
     all_dialogue = []
+    chunk_dialogues = []  # Track per-chunk dialogues for transition scoring
     prev_context = ""
     total_llm_time = 0
 
     for idx, chunk in enumerate(chunks):
         chunk_t0 = time.time()
-        system = STEP2_SYSTEM if idx == 0 else STEP2_CONTINUATION
-        dialogue_raw = _generate_single_dialogue(chunk, system=system,
-                                                  context=prev_context,
-                                                  is_continuation=not (idx == 0))
+        system = _select_system_prompt(prompt_mode, is_first=(idx == 0))
+        chunk_dialogue = []
+        for attempt in range(1, 3):
+            try:
+                raw = _generate_single_dialogue(chunk, system=system,
+                                                 context=prev_context,
+                                                 is_continuation=not (idx == 0),
+                                                 duration=duration,
+                                                 format_retry=(attempt > 1),
+                                                 prompt_mode=prompt_mode)
+                chunk_dialogue = parse_dialogue(raw)
+                if chunk_dialogue:
+                    break
+                logger.warning(f"Chunk {idx + 1} attempt {attempt} produced no dialogue, retrying...")
+            except Exception as e:
+                logger.warning(f"Chunk {idx + 1} attempt {attempt} failed: {e}")
         chunk_time = int((time.time() - chunk_t0) * 1000)
         total_llm_time += chunk_time
 
-        chunk_dialogue = parse_dialogue(dialogue_raw)
         if not chunk_dialogue:
-            logger.warning(f"Chunk {idx + 1} produced no dialogue, skipping")
+            logger.warning(f"Chunk {idx + 1} produced no dialogue after retries, skipping")
             continue
         _check_role_consistency(chunk_dialogue)
 
@@ -725,6 +1633,7 @@ def generate_structured_dialogue(clean_text: str, opening_text: str = "", model:
         all_dialogue.extend(chunk_dialogue)
         if chunk_dialogue:
             prev_context = "\n".join(f"{d['speaker']}：{d['text']}" for d in chunk_dialogue[-2:])
+            chunk_dialogues.append(chunk_dialogue)  # Save for transition scoring
 
         logger.info(f"Chunk {idx + 1}/{len(chunks)}: {len(chunk_dialogue)} turns ({chunk_time}ms)")
 
@@ -736,6 +1645,49 @@ def generate_structured_dialogue(clean_text: str, opening_text: str = "", model:
     # Self-evaluation on full dialogue
     eval_scores = evaluate_dialogue(clean_text, all_dialogue)
     logger.info(f"Self-evaluation scores: {eval_scores}")
+
+    # Chunk transition score (only for multi-chunk generations)
+    chunk_transition_score = None
+    if len(chunk_dialogues) >= 2:
+        chunk_transition_score = _chunk_transition_score(chunk_dialogues)
+        logger.info(f"Chunk transition score: {chunk_transition_score}")
+
+    output_length = sum(len(d["text"]) for d in all_dialogue)
+    text_stats = _compute_text_stats(all_dialogue)
+    role_violations = _check_role_consistency(all_dialogue)
+    _write_metrics(METRICS_GENERATION_PATH, {
+        "request_id": str(uuid.uuid4()), "session_id": None,
+        "model": model, "prompt_mode": prompt_mode, "split_strategy": split_strategy,
+        "chunk_count": len(chunks) if length > 4000 else None,
+        "total_turns": len(all_dialogue), "output_length_chars": output_length,
+        "expansion_ratio": round(output_length / max(1, length), 4),
+        "llm_time_ms": total_llm_time,
+        # First-tier
+        "keyword_coverage": eval_scores.get("keyword_coverage"),
+        "faithfulness": eval_scores.get("faithfulness"),
+        "q2_score": eval_scores.get("q2_score"),
+        "role_distinction": eval_scores.get("role_distinction"),
+        "distinct_1": eval_scores.get("distinct_1"),
+        "distinct_2": eval_scores.get("distinct_2"),
+        "content_accuracy_score": eval_scores.get("content_accuracy_score"),
+        "colloquial_score": eval_scores.get("colloquial_score"),
+        "role_difference_score": eval_scores.get("role_difference_score"),
+        "scene_fit_score": eval_scores.get("scene_fit_score"),
+        "format_valid": True, "has_speaker_format": True,
+        "role_violation_rate": round(role_violations["total"] / max(1, len(all_dialogue)), 4),
+        # Second-tier
+        "numeric_hallucination_rate": eval_scores.get("numeric_hallucination_rate"),
+        "entity_hallucination_rate": eval_scores.get("entity_hallucination_rate"),
+        "keyword_omission_rate": eval_scores.get("keyword_omission_rate"),
+        "coherence_score": eval_scores.get("coherence_score"),
+        "coherence_std": eval_scores.get("coherence_std"),
+        "opening_closing_score": eval_scores.get("opening_closing_score"),
+        "opening_guest_first": eval_scores.get("opening_guest_first"),
+        "closing_host_last": eval_scores.get("closing_host_last"),
+        "chunk_transition_score": chunk_transition_score,
+        **text_stats,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
 
     return all_dialogue, eval_scores, total_llm_time
 
@@ -776,8 +1728,8 @@ def tts_script(script: list[dict], voice_map: dict | None = None) -> str:
     out_path = Path(tempfile.mkdtemp(prefix="boke_")) / "podcast.mp3"
     logger.info(f"TTS starting {len(script)} turns via Fish Audio...")
     # Allow voice_map to override default voice IDs
-    male_id = voice_map.get("男声", MALE_VOICE_ID) if voice_map else MALE_VOICE_ID
-    female_id = voice_map.get("女声", FEMALE_VOICE_ID) if voice_map else FEMALE_VOICE_ID
+    male_id = voice_map.get("主持", MALE_VOICE_ID) if voice_map else MALE_VOICE_ID
+    female_id = voice_map.get("嘉宾", FEMALE_VOICE_ID) if voice_map else FEMALE_VOICE_ID
     generate_podcast(script, output_path=str(out_path),
                      male_ref_id=male_id or None,
                      female_ref_id=female_id or None)
@@ -791,10 +1743,25 @@ def tts_script(script: list[dict], voice_map: dict | None = None) -> str:
         duration_s = float(dur.stdout.strip())
         logger.info(f"TTS done: {out_path} ({duration_s:.1f}s)")
     except Exception:
+        duration_s = None
         logger.info(f"TTS done: {out_path}")
+
+    # TTS metrics
+    from collections import Counter
+    emotions = [t.get("emotion") for t in script if t.get("emotion")]
+    emotion_dist = dict(Counter(emotions))
+    _write_metrics(METRICS_PLAYBACK_PATH, {
+        "request_id": str(uuid.uuid4()), "session_id": None,
+        "phase": "tts", "voice_map": voice_map,
+        "emotion_distribution": emotion_dist,
+        "total_turns": len(script), "tts_time_ms": None,
+        "audio_duration_s": duration_s,
+        "high_quality": False, "bg_music": False, "success": True,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
     return str(out_path)
 
-def _post_process_audio(input_path: str, high_quality: bool = False, bg_music: bool = False) -> str:
+def _post_process_audio(input_path: str, high_quality: bool = False, bg_music: bool = False, bgm_path: str | None = None) -> str:
     """Apply audio post-processing (enhancement + background music). Returns final path."""
     tmp_dir = Path(input_path).parent
     current = input_path
@@ -813,7 +1780,7 @@ def _post_process_audio(input_path: str, high_quality: bool = False, bg_music: b
         except Exception as e:
             logger.warning(f"High-quality enhancement failed, using original: {e}")
 
-    if bg_music:
+    if bg_music or bgm_path:
         try:
             dur = subprocess.run(
                 [FFPROBE_PATH, "-v", "error", "-show_entries", "format=duration",
@@ -822,19 +1789,30 @@ def _post_process_audio(input_path: str, high_quality: bool = False, bg_music: b
             )
             duration = float(dur.stdout.strip())
             bg_path = tmp_dir / "bg_pad.mp3"
-            # Generate a soft ambient pad (C major chord)
-            subprocess.run(
-                [FFMPEG_PATH, "-y", "-f", "lavfi",
-                 "-i", "aevalsrc=0.05*sin(261.63*2*PI*t)+0.025*sin(329.63*2*PI*t)+0.015*sin(392.00*2*PI*t):s=48000",
-                 "-t", str(duration + 1), "-ac", "2", "-ar", "44100", str(bg_path)],
-                check=True, capture_output=True
-            )
+            if bgm_path and Path(bgm_path).exists():
+                # Use uploaded custom BGM
+                subprocess.run(
+                    [FFMPEG_PATH, "-y", "-i", bgm_path,
+                     "-t", str(duration + 1), "-ac", "2", "-ar", "44100",
+                     "-af", "volume=0.3", str(bg_path)],
+                    check=True, capture_output=True
+                )
+                bg_volume = 0.2
+            else:
+                # Generate a soft ambient pad (C major chord)
+                subprocess.run(
+                    [FFMPEG_PATH, "-y", "-f", "lavfi",
+                     "-i", "aevalsrc=0.05*sin(261.63*2*PI*t)+0.025*sin(329.63*2*PI*t)+0.015*sin(392.00*2*PI*t):s=48000",
+                     "-t", str(duration + 1), "-ac", "2", "-ar", "44100", str(bg_path)],
+                    check=True, capture_output=True
+                )
+                bg_volume = 0.06
             final_path = tmp_dir / "final.mp3"
             fade = f"afade=t=out:st={duration}:d=1"
             subprocess.run(
                 [FFMPEG_PATH, "-y", "-i", current, "-i", str(bg_path),
                  "-filter_complex",
-                 f"[0:a]volume=1.0[a0];[1:a]{fade},volume=0.06[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=2[a]",
+                 f"[0:a]volume=1.0[a0];[1:a]{fade},volume={bg_volume}[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=2[a]",
                  "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "2", str(final_path)],
                 check=True, capture_output=True
             )
@@ -950,6 +1928,23 @@ def _assemble_podcast(
     return output_path
 
 
+def _resolve_preset(settings: dict, section: str, preset_key: str) -> dict:
+    """Resolve preset config if preset_id is specified, otherwise return section config."""
+    section_cfg = dict(settings.get(section, {}))
+    preset_id = settings.get(preset_key)
+    presets = settings.get(f"{section}_presets", [])
+    if preset_id and presets:
+        for p in presets:
+            if p.get("id") == preset_id:
+                # Keep enabled state from section_cfg, override everything else with preset
+                enabled = section_cfg.get("enabled")
+                section_cfg.update({k: v for k, v in p.items() if k not in ("id", "name")})
+                if enabled is not None:
+                    section_cfg["enabled"] = enabled
+                break
+    return section_cfg
+
+
 def _generate_arranged_podcast(
     script: list[dict],
     settings: dict,
@@ -963,18 +1958,18 @@ def _generate_arranged_podcast(
     if tmp_dir is None:
         tmp_dir = Path(tempfile.mkdtemp(prefix="boke_arrange_"))
 
-    intro_cfg = settings.get("intro", {})
-    outro_cfg = settings.get("outro", {})
+    intro_cfg = _resolve_preset(settings, "intro", "intro_preset_id")
+    outro_cfg = _resolve_preset(settings, "outro", "outro_preset_id")
     body_bgm_cfg = settings.get("body_bgm", {})
 
     # 1. Intro TTS (if enabled)
     intro_path = None
     if intro_cfg.get("enabled"):
         intro_text = intro_cfg.get("template", "欢迎收听播刻。").replace("{topic}", title or "本期话题")
-        intro_speaker = intro_cfg.get("speaker", "男声")
+        intro_speaker = intro_cfg.get("speaker", "主持")
         intro_voice = intro_cfg.get("voice_id")
         if not intro_voice and voice_map:
-            intro_voice = voice_map.get(intro_speaker, MALE_VOICE_ID if intro_speaker == "男声" else FEMALE_VOICE_ID)
+            intro_voice = voice_map.get(intro_speaker, MALE_VOICE_ID if intro_speaker == "主持" else FEMALE_VOICE_ID)
         intro_path = str(tmp_dir / "intro.mp3")
         ok = _generate_intro_tts(intro_text, intro_path, voice_id=intro_voice)
         if not ok:
@@ -986,7 +1981,13 @@ def _generate_arranged_podcast(
 
     # 3. Body BGM / high-quality post-processing
     if body_bgm_cfg.get("enabled"):
-        body_path = _post_process_audio(body_path, high_quality=high_quality, bg_music=True)
+        bgm_path = body_bgm_cfg.get("custom_path")
+        if bgm_path and not Path(bgm_path).is_absolute():
+            bgm_path = str(BGM_UPLOAD_DIR / bgm_path)
+        body_path = _post_process_audio(
+            body_path, high_quality=high_quality, bg_music=True,
+            bgm_path=bgm_path,
+        )
     elif high_quality:
         body_path = _post_process_audio(body_path, high_quality=True, bg_music=False)
 
@@ -997,10 +1998,10 @@ def _generate_arranged_podcast(
             outro_text = f"以上就是关于{title or '这个话题'}的核心观点。感谢收听播刻，我们下期再见。"
         else:
             outro_text = outro_cfg.get("template", "感谢收听播刻，我们下期再见。")
-        outro_speaker = outro_cfg.get("speaker", "男声")
+        outro_speaker = outro_cfg.get("speaker", "主持")
         outro_voice = outro_cfg.get("voice_id")
         if not outro_voice and voice_map:
-            outro_voice = voice_map.get(outro_speaker, MALE_VOICE_ID if outro_speaker == "男声" else FEMALE_VOICE_ID)
+            outro_voice = voice_map.get(outro_speaker, MALE_VOICE_ID if outro_speaker == "主持" else FEMALE_VOICE_ID)
         outro_path = str(tmp_dir / "outro.mp3")
         ok = _generate_outro_tts(outro_text, outro_path, voice_id=outro_voice)
         if not ok:
@@ -1036,6 +2037,21 @@ def _generate_arranged_podcast(
     body_parent = Path(body_path).parent
     if body_parent != tmp_dir:
         shutil.rmtree(body_parent, ignore_errors=True)
+
+    # TTS metrics
+    from collections import Counter
+    emotions = [t.get("emotion") for t in script if t.get("emotion")]
+    emotion_dist = dict(Counter(emotions))
+    _write_metrics(METRICS_PLAYBACK_PATH, {
+        "request_id": str(uuid.uuid4()), "session_id": None,
+        "phase": "tts_arranged", "voice_map": voice_map,
+        "emotion_distribution": emotion_dist,
+        "total_turns": len(script), "tts_time_ms": None,
+        "audio_duration_s": None,
+        "high_quality": high_quality, "bg_music": bool(body_bgm_cfg.get("enabled")),
+        "success": True,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
 
     return final_path
 
@@ -1085,15 +2101,15 @@ def _load_persisted_sessions():
 OPENING_SYSTEM = """你是一个播客开场白编剧。根据给定的话题，生成一段双人播客的精彩开场。
 
 角色设定（双专家模式）：
-- 女声（细节追问者）：直接接地气，喜欢用有画面感的开场引入话题，从听众的实际关切出发
-- 男声（框架梳理者）：沉稳专业，善于接话和点出话题的深层价值或引发好奇
+- 嘉宾（细节追问者）：直接接地气，喜欢用有画面感的开场引入话题，从听众的实际关切出发
+- 主持（框架梳理者）：沉稳专业，善于接话和点出话题的深层价值或引发好奇
 
 要求：
-1. 仅生成2轮对话：女声开场（1句）→ 男声接话（1句）
-2. 女声的开场要有画面感，避免"今天我们来聊聊"这种干巴巴的开场
-3. 男声要自然接住女声的话，点出这个话题的价值或引发好奇
+1. 仅生成2轮对话：嘉宾开场（1句）→ 主持接话（1句）
+2. 嘉宾的开场要有画面感，避免"今天我们来聊聊"这种干巴巴的开场
+3. 主持要自然接住嘉宾的话，点出这个话题的价值或引发好奇
 4. 句子简短自然，适合播客收听
-5. 输出格式：每行 "女声：..." 或 "男声：..."
+5. 输出格式：每行 "嘉宾：..." 或 "主持：..."
 6. 不要多余内容，不要标序号"""
 
 
@@ -1156,13 +2172,13 @@ def generate_opening(topic: str) -> list[dict]:
     if len(dialogue) < 2:
         logger.warning(f"Opening parse failed, using fallback. Raw: {raw}")
         dialogue = [
-            {"speaker": "女声", "text": f"你听说过{topic[:20]}吗？这事儿挺有意思的。"},
-            {"speaker": "男声", "text": "还真没仔细了解，你给说说？"},
+            {"speaker": "嘉宾", "text": f"你听说过{topic[:20]}吗？这事儿挺有意思的。"},
+            {"speaker": "主持", "text": "还真没仔细了解，你给说说？"},
         ]
     return dialogue[:2]
 
 
-def _start_generation(url: str, text: str, duration: str, title: str | None = None, request_id: str | None = None, model: str | None = None, high_quality: bool = False, bg_music: bool = False, voice_map: dict | None = None) -> tuple[str, list[dict]]:
+def _start_generation(url: str, text: str, duration: str, title: str | None = None, request_id: str | None = None, model: str | None = None, high_quality: bool = False, bg_music: bool = False, voice_map: dict | None = None, prompt_mode: str = "original") -> tuple[str, list[dict]]:
     """Create session, generate opening script, and start background thread.
     Returns (session_id, opening_script)."""
     if not request_id:
@@ -1179,6 +2195,20 @@ def _start_generation(url: str, text: str, duration: str, title: str | None = No
     _session_set(session_id, "high_quality", high_quality)
     _session_set(session_id, "bg_music", bg_music)
     _session_set(session_id, "voice_map", voice_map)
+    _session_set(session_id, "prompt_mode", prompt_mode)
+
+    # A/B experiment assignment
+    input_length = len(url or text)
+    exp_config = _assign_experiment(request_id, input_length)
+    if exp_config:
+        logger.info(f"Experiment assigned for request {request_id}: {exp_config}")
+        if "prompt_mode" in exp_config:
+            _session_set(session_id, "prompt_mode", exp_config["prompt_mode"])
+        if "model" in exp_config:
+            _session_set(session_id, "model", exp_config["model"])
+        if "temperature" in exp_config:
+            _session_set(session_id, "temperature", exp_config["temperature"])
+        _session_set(session_id, "experiment_config", exp_config)
 
     opening_script = generate_opening(title)
     _session_set(session_id, "opening_script", opening_script)
@@ -1196,8 +2226,8 @@ def _start_generation(url: str, text: str, duration: str, title: str | None = No
 def _tts_script_segment(script: list[dict], tag: str = "seg", voice_map: dict | None = None) -> str:
     """TTS a subset of turns. Returns path to combined mp3 via Fish Audio."""
     out_path = Path(tempfile.mkdtemp(prefix=f"boke_{tag}_")) / f"{tag}.mp3"
-    male_id = voice_map.get("男声", MALE_VOICE_ID) if voice_map else MALE_VOICE_ID
-    female_id = voice_map.get("女声", FEMALE_VOICE_ID) if voice_map else FEMALE_VOICE_ID
+    male_id = voice_map.get("主持", MALE_VOICE_ID) if voice_map else MALE_VOICE_ID
+    female_id = voice_map.get("嘉宾", FEMALE_VOICE_ID) if voice_map else FEMALE_VOICE_ID
     generate_podcast(script, output_path=str(out_path),
                      male_ref_id=male_id or None,
                      female_ref_id=female_id or None)
@@ -1245,8 +2275,9 @@ def _background_full_generation(session_id: str, url: str, text: str,
         t1 = time.time()
         opening_text = _build_continuation_prompt(opening_script)
 
+        session_prompt_mode = (_session_get(session_id) or {}).get("prompt_mode", "original")
         full_dialogue, eval_scores, llm_time = generate_structured_dialogue(
-            clean_text, opening_text=opening_text, model=model
+            clean_text, opening_text=opening_text, model=model, duration=duration, prompt_mode=session_prompt_mode
         )
         _session_set(session_id, "llm_time_ms", llm_time)
         _session_set(session_id, "progress", 70)
@@ -1331,12 +2362,13 @@ def api_generate_streaming():
     text = data.get("text", "").strip()
     duration = data.get("duration", "standard")
     request_id = data.get("request_id", str(uuid.uuid4()))
-    model = MODEL_MAP.get(data.get("model", "kimi"))
+    model = _resolve_model(data.get("model", "deepseek"))
     high_quality = bool(data.get("high_quality", False))
     bg_music = bool(data.get("bg_music", False))
     voice_map = data.get("voice_map")
     if voice_map and not isinstance(voice_map, dict):
         voice_map = None
+    prompt_mode = data.get("prompt_mode", "auto")
     session_id = str(uuid.uuid4())
     t0 = time.time()
 
@@ -1346,7 +2378,7 @@ def api_generate_streaming():
         return jsonify({"error": "服务端未配置 API 密钥"}), 500
 
     try:
-        session_id, opening_script = _start_generation(url, text, duration, request_id=request_id, model=model, high_quality=high_quality, bg_music=bg_music, voice_map=voice_map)
+        session_id, opening_script = _start_generation(url, text, duration, request_id=request_id, model=model, high_quality=high_quality, bg_music=bg_music, voice_map=voice_map, prompt_mode=prompt_mode)
 
         # TTS opening (~2s)
         session = _session_get(session_id) or {}
@@ -1448,6 +2480,61 @@ def api_settings_reset():
     _save_settings(dict(_DEFAULT_SETTINGS))
     return jsonify({"status": "reset"})
 
+
+@app.route("/api/upload_bgm", methods=["POST"])
+def api_upload_bgm():
+    """Upload a custom background music file (MP3/WAV/M4A/OGG)."""
+    if "file" not in request.files:
+        return jsonify({"error": "请上传音频文件"}), 400
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "文件名不能为空"}), 400
+    filename = secure_filename(file.filename)
+    ext = Path(filename).suffix.lower()
+    if ext not in {".mp3", ".wav", ".m4a", ".ogg"}:
+        return jsonify({"error": f"不支持的音频格式: {ext}，请上传 MP3、WAV、M4A 或 OGG"}), 400
+    saved_name = f"{uuid.uuid4().hex}{ext}"
+    save_path = BGM_UPLOAD_DIR / saved_name
+    file.save(str(save_path))
+    logger.info(f"BGM uploaded: {saved_name} ({filename})")
+    return jsonify({
+        "filename": filename,
+        "saved_name": saved_name,
+        "path": str(save_path),
+    })
+
+
+@app.route("/api/bgm", methods=["GET"])
+def api_bgm():
+    """List uploaded background music files."""
+    files = []
+    if BGM_UPLOAD_DIR.exists():
+        for f in sorted(BGM_UPLOAD_DIR.iterdir()):
+            if f.is_file():
+                files.append({
+                    "id": f.name,
+                    "name": f.name,
+                    "path": str(f),
+                    "size": f.stat().st_size,
+                })
+    return jsonify({"files": files})
+
+
+@app.route("/api/bgm/<file_id>", methods=["DELETE"])
+def api_delete_bgm(file_id: str):
+    """Delete an uploaded BGM file."""
+    target = BGM_UPLOAD_DIR / secure_filename(file_id)
+    try:
+        if target.exists() and target.is_file():
+            target.unlink()
+            logger.info(f"BGM deleted: {file_id}")
+            return jsonify({"status": "deleted"})
+        return jsonify({"error": "文件不存在"}), 404
+    except Exception as e:
+        logger.error(f"Delete BGM failed: {e}")
+        return jsonify({"error": str(e)[:200]}), 500
+
+
 @app.route("/api/parse", methods=["POST"])
 def api_parse():
     data = request.get_json(silent=True) or {}
@@ -1469,6 +2556,14 @@ def api_parse():
                 "input_type": input_type, "input_length": input_length,
                 "parse_time_ms": parse_ms, "success": True, "error_message": None,
             })
+            _write_metrics(METRICS_INPUT_PATH, {
+                "request_id": request_id, "input_source": "url", "platform": "网页",
+                "article_length_chars": len(clean_text), "has_native_headers": False,
+                "header_count": 0, "parse_success": True, "parse_time_ms": parse_ms,
+                "extraction_compression_ratio": round(len(clean_text) / max(1, input_length), 4),
+                "chunk_count": None, "split_strategy": None,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
             return jsonify({"request_id": request_id, "title": title, "clean_text": clean_text,
                           "parse_time_ms": parse_ms, "input_type": input_type, "input_length": input_length})
         except ValueError as e:
@@ -1478,6 +2573,13 @@ def api_parse():
                 "input_type": input_type, "input_length": input_length,
                 "parse_time_ms": parse_ms, "success": False, "error_message": str(e),
             })
+            _write_metrics(METRICS_INPUT_PATH, {
+                "request_id": request_id, "input_source": "url", "platform": "网页",
+                "article_length_chars": 0, "has_native_headers": False,
+                "header_count": 0, "parse_success": False, "parse_time_ms": parse_ms,
+                "extraction_compression_ratio": 0, "chunk_count": None, "split_strategy": None,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
             return jsonify({"error": str(e)}), 400
     elif text:
         clean_text = text
@@ -1486,6 +2588,13 @@ def api_parse():
             "request_id": request_id, "phase": "parse",
             "input_type": input_type, "input_length": input_length,
             "parse_time_ms": parse_ms, "success": True, "error_message": None,
+        })
+        _write_metrics(METRICS_INPUT_PATH, {
+            "request_id": request_id, "input_source": "text", "platform": "网页",
+            "article_length_chars": len(clean_text), "has_native_headers": False,
+            "header_count": 0, "parse_success": True, "parse_time_ms": parse_ms,
+            "extraction_compression_ratio": 1.0, "chunk_count": None, "split_strategy": None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         return jsonify({"request_id": request_id, "title": "", "clean_text": clean_text,
                       "parse_time_ms": parse_ms, "input_type": input_type, "input_length": input_length})
@@ -1553,6 +2662,14 @@ def api_upload():
         title = Path(filename).stem
         clean_text = body.strip()
         parse_ms = int((time.time() - t0) * 1000)
+        _write_metrics(METRICS_INPUT_PATH, {
+            "request_id": str(uuid.uuid4()), "input_source": "upload", "platform": "网页",
+            "article_length_chars": len(clean_text), "has_native_headers": False,
+            "header_count": 0, "parse_success": True, "parse_time_ms": parse_ms,
+            "extraction_compression_ratio": round(len(clean_text) / max(1, file.content_length or len(clean_text)), 4),
+            "chunk_count": None, "split_strategy": None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
         return jsonify({
             "title": title,
             "clean_text": clean_text,
@@ -1561,9 +2678,23 @@ def api_upload():
             "input_length": len(clean_text),
         })
     except ValueError as e:
+        _write_metrics(METRICS_INPUT_PATH, {
+            "request_id": str(uuid.uuid4()), "input_source": "upload", "platform": "网页",
+            "article_length_chars": 0, "has_native_headers": False,
+            "header_count": 0, "parse_success": False, "parse_time_ms": int((time.time() - t0) * 1000),
+            "extraction_compression_ratio": 0, "chunk_count": None, "split_strategy": None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Upload processing failed: {e}", exc_info=True)
+        _write_metrics(METRICS_INPUT_PATH, {
+            "request_id": str(uuid.uuid4()), "input_source": "upload", "platform": "网页",
+            "article_length_chars": 0, "has_native_headers": False,
+            "header_count": 0, "parse_success": False, "parse_time_ms": int((time.time() - t0) * 1000),
+            "extraction_compression_ratio": 0, "chunk_count": None, "split_strategy": None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
         return jsonify({"error": f"文件处理失败: {str(e)[:200]}"}), 500
     finally:
         if tmp_path and tmp_path.parent.exists():
@@ -1575,6 +2706,9 @@ def api_generate_script():
     data = request.get_json(silent=True) or {}
     clean_text = data.get("clean_text", "").strip()
     request_id = data.get("request_id", str(uuid.uuid4()))
+    model = _resolve_model(data.get("model", "deepseek"))
+    duration = data.get("duration", "free")
+    prompt_mode = data.get("prompt_mode", "auto")
 
     if not clean_text:
         return jsonify({"error": "clean_text 不能为空"}), 400
@@ -1583,7 +2717,17 @@ def api_generate_script():
 
     try:
         t0 = time.time()
-        dialogue, eval_scores, llm_time = generate_structured_dialogue(clean_text)
+
+        # A/B experiment assignment
+        exp_config = _assign_experiment(request_id, len(clean_text))
+        if exp_config:
+            logger.info(f"Experiment assigned for request {request_id}: {exp_config}")
+            if "prompt_mode" in exp_config:
+                prompt_mode = exp_config["prompt_mode"]
+            if "model" in exp_config:
+                model = exp_config["model"]
+
+        dialogue, eval_scores, llm_time = generate_structured_dialogue(clean_text, model=model, duration=duration, prompt_mode=prompt_mode)
         total_llm_ms = int((time.time() - t0) * 1000)
 
         has_speaker, format_valid = validate_dialogue_format(dialogue)
@@ -1615,6 +2759,106 @@ def api_generate_script():
             "success": False, "error_message": str(e)[:200],
         })
         return jsonify({"error": str(e)[:200]}), 500
+
+
+@app.route("/api/parse_script", methods=["POST"])
+def api_parse_script():
+    """Parse user-provided dialogue script from text, file, or image."""
+    text = (request.get_json(silent=True) or {}).get("text", "").strip()
+    if text:
+        script = parse_dialogue(text)
+        if not script:
+            return jsonify({"error": "未能识别出有效的对话格式，请确保每行以「主持：」或「嘉宾：」开头"}), 400
+        return jsonify({"script": script, "source": "text", "total_turns": len(script)})
+
+    if "file" not in request.files:
+        return jsonify({"error": "请提供文本内容或上传文件"}), 400
+
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "文件名不能为空"}), 400
+
+    from werkzeug.utils import secure_filename
+    filename = secure_filename(file.filename)
+    ext = Path(filename).suffix.lower()
+
+    try:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="boke_script_"))
+        tmp_path = tmp_dir / filename
+        file.save(str(tmp_path))
+
+        image_exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+        doc_exts = {".pdf", ".docx", ".txt", ".md"}
+
+        if ext in image_exts:
+            import base64
+            img_data = tmp_path.read_bytes()
+            b64 = base64.b64encode(img_data).decode("utf-8")
+            mime = f"image/{ext.lstrip('.')}".replace("jpg", "jpeg")
+            ocr_prompt = "请识别图片中的所有文字，原样输出。不要添加任何解释。"
+            try:
+                ocr_resp = req.post(
+                    ZHI_API_BASE,
+                    json={
+                        "model": "deepseek-v4",
+                        "messages": [
+                            {"role": "user", "content": [
+                                {"type": "text", "text": ocr_prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                            ]},
+                        ],
+                        "max_tokens": 4096,
+                    },
+                    headers={"Authorization": f"Bearer {ZHI_API_KEY}", "Content-Type": "application/json"},
+                    timeout=60,
+                )
+                ocr_data = ocr_resp.json()
+                extracted = (ocr_data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+            except Exception as e:
+                return jsonify({"error": f"图片文字识别失败: {str(e)[:100]}"}), 500
+
+            script = parse_dialogue(extracted)
+            if not script:
+                return jsonify({
+                    "error": "图片中未识别出对话格式，请确保证片上包含「主持：」「嘉宾：」格式的对话",
+                    "raw_text": extracted[:500],
+                }), 400
+            return jsonify({"script": script, "source": "image_ocr", "total_turns": len(script), "raw_text": extracted})
+
+        elif ext in doc_exts:
+            if ext == ".pdf":
+                from PyPDF2 import PdfReader
+                reader = PdfReader(str(tmp_path))
+                body = "\n".join(p.extract_text() for p in reader.pages if p.extract_text())
+            elif ext == ".docx":
+                from docx import Document
+                doc = Document(str(tmp_path))
+                body = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            else:
+                encodings = ["utf-8", "gbk", "gb2312", "utf-16"]
+                body = None
+                for enc in encodings:
+                    try:
+                        body = tmp_path.read_text(encoding=enc)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                if body is None:
+                    return jsonify({"error": "无法识别文件编码"}), 400
+
+            script = parse_dialogue(body.strip())
+            if not script:
+                return jsonify({"error": "文件中未识别出对话格式，请确保内容以「主持：」「嘉宾：」格式编写"}), 400
+            return jsonify({"script": script, "source": "file", "total_turns": len(script)})
+
+        else:
+            return jsonify({"error": f"不支持的文件格式: {ext}，请上传图片(PNG/JPG)、PDF、DOCX 或 TXT"}), 400
+
+    finally:
+        if tmp_path and tmp_path.parent.exists():
+            import shutil
+            shutil.rmtree(tmp_path.parent, ignore_errors=True)
+
 
 @app.route("/api/tts", methods=["POST"])
 def api_tts():
@@ -1710,34 +2954,34 @@ def frontend_assets(path):
 
 EXPLORE_ARTICLES = [
     {"id":"exp_1","title":"AI 时代的教育变革：为什么我们需要重新定义学习","desc":"深度探讨了 AI 对教育体系的影响","tag":"精选","platform":"公众号","icon":"📄","gradient":"linear-gradient(135deg,#FF6B6B15,#5E9EFF15)",
-     "summary":"男声和女声从各自的角度探讨了 AI 对传统教育体系的冲击。女声用自己孩子学校的例子说明课堂已经在变化，男声则从更宏观的视角分析了教育理念需要如何转变。",
+     "summary":"主持和嘉宾从各自的角度探讨了 AI 对传统教育体系的冲击。嘉宾用自己孩子学校的例子说明课堂已经在变化，主持则从更宏观的视角分析了教育理念需要如何转变。",
      "chapters":[{"t":"01 · 教育的困境","d":"AI 时代的到来让传统教育模式面临前所未有的挑战"},{"t":"02 · 重新定义学习","d":"从知识灌输到能力培养，学习方式的根本转变"},{"t":"03 · 实践建议","d":"如何在 AI 时代重新规划学习路径"}]},
     {"id":"exp_2","title":"2026 年新能源汽车市场趋势：价格战后的新格局","desc":"分析新能源汽车市场的竞争格局变化","tag":"精选","platform":"知乎","icon":"📝","gradient":"linear-gradient(135deg,#FF9F5E15,#FF6B6B15)",
-     'summary':'女声开篇就抛出了「价格战打完了，然后呢」的疑问。男声用数据分析了各品牌的生存状况，两人一致认为技术差异化和海外市场是下一阶段的关键。',
+     'summary':'嘉宾开篇就抛出了「价格战打完了，然后呢」的疑问。主持用数据分析了各品牌的生存状况，两人一致认为技术差异化和海外市场是下一阶段的关键。',
      "chapters":[{"t":"01 · 市场回顾","d":"2025 年价格战后的市场格局重塑"},{"t":"02 · 品牌分析","d":"各主要品牌的战略定位和差异化"},{"t":"03 · 未来预测","d":"2026-2027 年的关键趋势和变量"}]},
     {"id":"exp_3","title":"为什么日本半导体产业在过去三十年衰落又崛起？","desc":"日本半导体产业从崛起到衰落再到复兴","tag":"精选","platform":"网页","icon":"🌐","gradient":"linear-gradient(135deg,#5E9EFF15,#34C75915)",
-     "summary":"男声从历史角度梳理了日本半导体产业的完整发展脉络。女声则从当下供应链的角度分析了日本在材料领域的不可替代性。",
+     "summary":"主持从历史角度梳理了日本半导体产业的完整发展脉络。嘉宾则从当下供应链的角度分析了日本在材料领域的不可替代性。",
      "chapters":[{"t":"01 · 辉煌时期","d":"日本半导体在上世纪 80 年代的全球主导地位"},{"t":"02 · 衰落原因","d":"日美贸易摩擦和产业策略失误"},{"t":"03 · 复兴之路","d":"当前日本在半导体材料领域的重新崛起"}]},
     {"id":"exp_4","title":"特斯拉 FSD 入华：自动驾驶的新篇章","desc":"FSD 正式进入中国，对本土企业产生的影响","tag":"热门","platform":"B站","icon":"▶️","gradient":"linear-gradient(135deg,#34C75915,#5E9EFF15)",
-     "summary":"女声试驾了搭载 FSD 的车型后兴奋地分享了体验。男声则冷静分析了特斯拉的技术路线和本土化挑战。",
+     "summary":"嘉宾试驾了搭载 FSD 的车型后兴奋地分享了体验。主持则冷静分析了特斯拉的技术路线和本土化挑战。",
      "chapters":[{"t":"01 · 入华背景","d":"FSD 获批进入中国市场的来龙去脉"},{"t":"02 · 技术对比","d":"特斯拉 vs 华为小鹏的自动驾驶路线差异"},{"t":"03 · 行业影响","d":"FSD 入华对本土企业的竞争压力"}]},
     {"id":"exp_5","title":"SpaceX 星舰第五飞：人类登陆火星的里程碑","desc":"筷子回收技术取得历史性突破","tag":"热门","platform":"B站","icon":"▶️","gradient":"linear-gradient(135deg,#764BA215,#FF6B6B15)",
-     "summary":"女声一上来就说“太震撼了”，描述了亲眼看到筷子捕获助推器的画面。男声用通俗的比喻解释了这项技术突破的意义。",
+     "summary":"嘉宾一上来就说“太震撼了”，描述了亲眼看到筷子捕获助推器的画面。主持用通俗的比喻解释了这项技术突破的意义。",
      "chapters":[{"t":"01 · 任务回顾","d":"星舰第五次轨道测试的关键节点"},{"t":"02 · 筷子技术","d":"发射塔捕获助推器的工程技术突破"},{"t":"03 · 火星展望","d":"完全可重复使用火箭对太空探索的意义"}]},
     {"id":"exp_6","title":"DeepSeek 崛起：中国 AI 大模型的新格局","desc":"开源策略和高效训练方法引发行业关注","tag":"精选","platform":"公众号","icon":"📄","gradient":"linear-gradient(135deg,#FF6B6B15,#764BA215)",
-     "summary":"女声用“性价比之王”来形容 DeepSeek。男声分析了 DeepSeek 的技术路线和开源策略对行业的影响。",
+     "summary":"嘉宾用“性价比之王”来形容 DeepSeek。主持分析了 DeepSeek 的技术路线和开源策略对行业的影响。",
      "chapters":[{"t":"01 · 技术突破","d":"DeepSeek 高效训练方法的技术创新"},{"t":"02 · 开源策略","d":"开源对 AI 行业竞争格局的影响"},{"t":"03 · 未来展望","d":"算法创新能否持续弥补算力差距"}]},
     {"id":"exp_7","title":"小米 SU7 上市三个月：真实用户体验","desc":"小米首款汽车 SU7 首批用户真实反馈","tag":"精选","platform":"小红书","icon":"📱","gradient":"linear-gradient(135deg,#FF6B6B15,#FFD70015)",
-     "summary":"女声分享了朋友提车后的真实体验。男声从产品定义和造车基本功两个维度进行了分析。",
+     "summary":"嘉宾分享了朋友提车后的真实体验。主持从产品定义和造车基本功两个维度进行了分析。",
      "chapters":[{"t":"01 · 智能座舱","d":"人车家全生态互联的实际体验"},{"t":"02 · 续航表现","d":"真实续航达成率和充电便利性"},{"t":"03 · 综合评价","d":"小米第一款车的得与失"}]},
     {"id":"exp_8","title":"小红书电商崛起：从种草到拔草","desc":"小红书从内容社区到交易平台的转型","tag":"热门","platform":"小红书","icon":"📱","gradient":"linear-gradient(135deg,#FF9F5E15,#FF6B6B15)",
-     "summary":"女声说现在买东西先看小红书。男声分析了这种消费决策路径变化背后的商业逻辑。",
+     "summary":"嘉宾说现在买东西先看小红书。主持分析了这种消费决策路径变化背后的商业逻辑。",
      "chapters":[{"t":"01 · 平台转型","d":"从内容社区到交易平台的演变"},{"t":"02 · 商业模式","d":"买手直播和店铺直播双引擎"},{"t":"03 · 挑战与未来","d":"商业化 vs 社区氛围的平衡"}]},
     {"id":"exp_9","title":"《黑神话：悟空》DLC 前瞻","desc":"游戏科学确认 DLC 正在开发中","tag":"热门","platform":"B站","icon":"▶️","gradient":"linear-gradient(135deg,#764BA215,#FF6B6B15)",
-     "summary":"女声作为游戏迷兴奋地聊起了 DLC 的传闻。男声则分析了这款游戏对中国游戏产业的意义。",
+     "summary":"嘉宾作为游戏迷兴奋地聊起了 DLC 的传闻。主持则分析了这款游戏对中国游戏产业的意义。",
      "chapters":[{"t":"01 · 全球成绩","d":"《黑神话》全球销量突破 2000 万份"},{"t":"02 · DLC 内容","d":"火焰山、狮驼岭等新场景展望"},{"t":"03 · 产业影响","d":"中国 3A 游戏的未来之路"}]},
     {"id":"exp_10","title":"比亚迪秦 L DM-i 实测：油耗 2 升时代","desc":"第五代 DM 混动技术首款车型实测","tag":"精选","platform":"知乎","icon":"📝","gradient":"linear-gradient(135deg,#34C75915,#5E9EFF15)",
-     "summary":"女声算了一笔账：这车一年能省多少油钱。男声从技术角度解析了 46% 热效率发动机的含金量。",
+     "summary":"嘉宾算了一笔账：这车一年能省多少油钱。主持从技术角度解析了 46% 热效率发动机的含金量。",
      "chapters":[{"t":"01 · 技术解析","d":"第五代 DM 混动技术的核心突破"},{"t":"02 · 实测数据","d":"亏电油耗 2.9L 和 2000km 续航"},{"t":"03 · 市场影响","d":"插混车型加速替代燃油车"}]},
 ]
 
@@ -1799,7 +3043,7 @@ def api_podcast_detail(session_id: str):
         total_turns = len(full_script)
         chunk_size = max(1, total_turns // 3)
         chapter_names = [
-            ("开场与导入", "男声和女声引入话题"),
+            ("开场与导入", "主持和嘉宾引入话题"),
             ("核心讨论", f"围绕 {title[:20]} 展开深入讨论") if title else ("核心讨论", "深入分析文章核心观点"),
             ("总结与延伸", "回顾关键 takeaways，延伸思考"),
         ]
@@ -2452,6 +3696,704 @@ def api_search():
     return jsonify({"podcasts": podcasts, "subscriptions": subs, "articles": articles})
 
 
+# ── Admin Dashboard (standalone HTML) ──
+
+@app.route("/admin")
+def admin_dashboard():
+    """Serve standalone admin monitoring dashboard."""
+    admin_path = BASE_DIR / "admin.html"
+    if admin_path.exists():
+        return send_file(str(admin_path), mimetype="text/html")
+    return "Admin dashboard not found", 404
+
+
+# ── Metrics APIs ──
+
+@app.route("/api/metrics/playback_event", methods=["POST"])
+def api_metrics_playback_event():
+    """Report playback events (turn_start, turn_exit, pause, complete, exit)."""
+    data = request.get_json(force=True) or {}
+    entry = {
+        "session_id": data.get("session_id"),
+        "turn_index": data.get("turn_index"),
+        "event_type": data.get("event_type"),
+        "listen_duration_s": data.get("listen_duration_s"),
+        "total_listen_time_s": data.get("total_listen_time_s"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_metrics(METRICS_PLAYBACK_PATH, entry)
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/metrics/dashboard", methods=["GET"])
+def api_metrics_dashboard():
+    """Aggregate monitoring data for the dashboard."""
+    days = int(request.args.get("days", "7"))
+    input_metrics = _load_metrics(METRICS_INPUT_PATH, days=days)
+    generation_metrics = _load_metrics(METRICS_GENERATION_PATH, days=days)
+    playback_metrics = _load_metrics(METRICS_PLAYBACK_PATH, days=days)
+
+    # Input layer
+    total_articles = len(input_metrics)
+    source_dist = {}
+    platform_dist = {}
+    article_lengths = []
+    parse_failures = 0
+    has_native_headers_count = 0
+    header_counts = []
+    compression_ratios = []
+    chunk_counts = []
+    split_strategies = {}
+    for m in input_metrics:
+        src = m.get("input_source", "unknown")
+        source_dist[src] = source_dist.get(src, 0) + 1
+        plat = m.get("platform", "网页")
+        platform_dist[plat] = platform_dist.get(plat, 0) + 1
+        if m.get("article_length_chars"):
+            article_lengths.append(m["article_length_chars"])
+        if not m.get("parse_success"):
+            parse_failures += 1
+        if m.get("has_native_headers"):
+            has_native_headers_count += 1
+        if m.get("header_count") is not None:
+            header_counts.append(m["header_count"])
+        if m.get("extraction_compression_ratio") is not None:
+            compression_ratios.append(m["extraction_compression_ratio"])
+        if m.get("chunk_count") is not None:
+            chunk_counts.append(m["chunk_count"])
+        ss = m.get("split_strategy")
+        if ss:
+            split_strategies[ss] = split_strategies.get(ss, 0) + 1
+
+    # Generation quality
+    coverage_vals = [m.get("keyword_coverage") for m in generation_metrics if m.get("keyword_coverage") is not None]
+    faith_vals = [m.get("faithfulness") for m in generation_metrics if m.get("faithfulness") is not None]
+    role_dist_vals = [m.get("role_distinction") for m in generation_metrics if m.get("role_distinction") is not None]
+    format_failures = sum(1 for m in generation_metrics if not m.get("format_valid"))
+    model_dist = {}
+    prompt_mode_dist = {}
+    split_strategy_gen = {}
+    output_lengths = []
+    expansion_ratios = []
+    llm_times = []
+    distinct_1_vals = [m.get("distinct_1") for m in generation_metrics if m.get("distinct_1") is not None]
+    distinct_2_vals = [m.get("distinct_2") for m in generation_metrics if m.get("distinct_2") is not None]
+    content_scores = [m.get("content_accuracy_score") for m in generation_metrics if m.get("content_accuracy_score") is not None]
+    colloquial_scores = [m.get("colloquial_score") for m in generation_metrics if m.get("colloquial_score") is not None]
+    role_diff_scores = [m.get("role_difference_score") for m in generation_metrics if m.get("role_difference_score") is not None]
+    scene_scores = [m.get("scene_fit_score") for m in generation_metrics if m.get("scene_fit_score") is not None]
+    speaker_format_count = sum(1 for m in generation_metrics if m.get("has_speaker_format"))
+    chunk_count_gen = []
+    total_turns_list = []
+    for m in generation_metrics:
+        model = m.get("model") or "unknown"
+        model_dist[model] = model_dist.get(model, 0) + 1
+        pm = m.get("prompt_mode") or "unknown"
+        prompt_mode_dist[pm] = prompt_mode_dist.get(pm, 0) + 1
+        sg = m.get("split_strategy") or "unknown"
+        split_strategy_gen[sg] = split_strategy_gen.get(sg, 0) + 1
+        if m.get("output_length_chars"):
+            output_lengths.append(m["output_length_chars"])
+        if m.get("expansion_ratio") is not None:
+            expansion_ratios.append(m["expansion_ratio"])
+        if m.get("llm_time_ms"):
+            llm_times.append(m["llm_time_ms"])
+        if m.get("chunk_count") is not None:
+            chunk_count_gen.append(m["chunk_count"])
+        if m.get("total_turns"):
+            total_turns_list.append(m["total_turns"])
+
+    # Text stats (first-tier)
+    avg_turn_lengths = [m.get("avg_turn_length") for m in generation_metrics if m.get("avg_turn_length") is not None]
+    question_ratios = [m.get("question_ratio") for m in generation_metrics if m.get("question_ratio") is not None]
+    exclamation_ratios = [m.get("exclamation_ratio") for m in generation_metrics if m.get("exclamation_ratio") is not None]
+    filler_densities = [m.get("filler_density") for m in generation_metrics if m.get("filler_density") is not None]
+    pause_densities = [m.get("pause_density") for m in generation_metrics if m.get("pause_density") is not None]
+    emotion_tag_rates = [m.get("emotion_tag_rate") for m in generation_metrics if m.get("emotion_tag_rate") is not None]
+    role_violation_rates = [m.get("role_violation_rate") for m in generation_metrics if m.get("role_violation_rate") is not None]
+
+    # Q2 score (factual consistency, only present when use_q2=True)
+    q2_scores = [m.get("q2_score") for m in generation_metrics if m.get("q2_score") is not None]
+
+    # Second-tier metrics (tier-2 evaluation)
+    numeric_hall_vals = [m.get("numeric_hallucination_rate") for m in generation_metrics if m.get("numeric_hallucination_rate") is not None]
+    entity_hall_vals = [m.get("entity_hallucination_rate") for m in generation_metrics if m.get("entity_hallucination_rate") is not None]
+    omission_vals = [m.get("keyword_omission_rate") for m in generation_metrics if m.get("keyword_omission_rate") is not None]
+    coherence_vals = [m.get("coherence_score") for m in generation_metrics if m.get("coherence_score") is not None]
+    coherence_std_vals = [m.get("coherence_std") for m in generation_metrics if m.get("coherence_std") is not None]
+    oc_vals = [m.get("opening_closing_score") for m in generation_metrics if m.get("opening_closing_score") is not None]
+    opening_guest_first_count = sum(1 for m in generation_metrics if m.get("opening_guest_first"))
+    closing_host_last_count = sum(1 for m in generation_metrics if m.get("closing_host_last"))
+    chunk_transition_vals = [m.get("chunk_transition_score") for m in generation_metrics if m.get("chunk_transition_score") is not None]
+
+    # User actions (replay / regenerate / edit_generate)
+    user_actions = _load_metrics(METRICS_USER_ACTION_PATH, days=days)
+    user_action_counts = {}
+    user_action_unique_sessions = {}
+    for m in user_actions:
+        at = m.get("action_type", "unknown")
+        user_action_counts[at] = user_action_counts.get(at, 0) + 1
+        sid = m.get("session_id")
+        if sid:
+            if at not in user_action_unique_sessions:
+                user_action_unique_sessions[at] = set()
+            user_action_unique_sessions[at].add(sid)
+    total_user_actions = sum(user_action_counts.values())
+
+    # Input layer strategy rates
+    single_shot_count = sum(1 for m in input_metrics if m.get("split_strategy") == "single-shot")
+    fallback_count = sum(1 for m in input_metrics if m.get("split_strategy") == "chunked-fallback")
+    total_with_strategy = max(1, sum(1 for m in input_metrics if m.get("split_strategy")))
+    chunk_lengths = []
+    for m in input_metrics:
+        alen = m.get("article_length_chars")
+        ccnt = m.get("chunk_count")
+        if alen and ccnt:
+            chunk_lengths.append(alen / ccnt)
+
+    def _avg(vals):
+        return round(sum(vals) / len(vals), 4) if vals else 0.0
+
+    daily_trend = {}
+    for m in generation_metrics:
+        ts = m.get("timestamp", "")
+        date = ts[:10] if ts else "unknown"
+        if date not in daily_trend:
+            daily_trend[date] = {"coverage": [], "faithfulness": [], "q2_score": [], "turns": [], "count": 0,
+                                 "distinct_1": [], "distinct_2": [], "llm_time": []}
+        if m.get("keyword_coverage") is not None:
+            daily_trend[date]["coverage"].append(m["keyword_coverage"])
+        if m.get("faithfulness") is not None:
+            daily_trend[date]["faithfulness"].append(m["faithfulness"])
+        if m.get("q2_score") is not None:
+            daily_trend[date]["q2_score"].append(m["q2_score"])
+        if m.get("total_turns"):
+            daily_trend[date]["turns"].append(m["total_turns"])
+        if m.get("distinct_1") is not None:
+            daily_trend[date]["distinct_1"].append(m["distinct_1"])
+        if m.get("distinct_2") is not None:
+            daily_trend[date]["distinct_2"].append(m["distinct_2"])
+        if m.get("llm_time_ms"):
+            daily_trend[date]["llm_time"].append(m["llm_time_ms"])
+        daily_trend[date]["count"] += 1
+
+    daily_trend_list = []
+    for date, vals in sorted(daily_trend.items()):
+        daily_trend_list.append({
+            "date": date,
+            "coverage": round(sum(vals["coverage"]) / len(vals["coverage"]), 4) if vals["coverage"] else 0,
+            "faithfulness": round(sum(vals["faithfulness"]) / len(vals["faithfulness"]), 4) if vals["faithfulness"] else 0,
+            "turns": round(sum(vals["turns"]) / len(vals["turns"]), 1) if vals["turns"] else 0,
+            "faithfulness": round(sum(vals["faithfulness"]) / len(vals["faithfulness"]), 4) if vals["faithfulness"] else 0,
+            "q2_score": round(sum(vals["q2_score"]) / len(vals["q2_score"]), 4) if vals["q2_score"] else 0,
+            "distinct_1": round(sum(vals["distinct_1"]) / len(vals["distinct_1"]), 4) if vals["distinct_1"] else 0,
+            "distinct_2": round(sum(vals["distinct_2"]) / len(vals["distinct_2"]), 4) if vals["distinct_2"] else 0,
+            "avg_llm_time_ms": round(sum(vals["llm_time"]) / len(vals["llm_time"])) if vals["llm_time"] else 0,
+        })
+
+    # TTS
+    tts_sessions = [m for m in playback_metrics if m.get("phase") == "tts"]
+    tts_arranged = [m for m in playback_metrics if m.get("phase") == "tts_arranged"]
+    all_tts = tts_sessions + tts_arranged
+    tts_failures = sum(1 for m in all_tts if not m.get("success"))
+    emotion_dist = {}
+    voice_dist = {}
+    tts_times = []
+    audio_durations = []
+    hq_count = 0
+    bgm_count = 0
+    turn_counts = []
+    for m in all_tts:
+        for emo, count in (m.get("emotion_distribution") or {}).items():
+            emotion_dist[emo] = emotion_dist.get(emo, 0) + count
+        vm = m.get("voice_map") or {}
+        for speaker, voice_id in vm.items():
+            voice_dist[voice_id] = voice_dist.get(voice_id, 0) + 1
+        if m.get("tts_time_ms"):
+            tts_times.append(m["tts_time_ms"])
+        if m.get("audio_duration_s"):
+            audio_durations.append(m["audio_duration_s"])
+        if m.get("high_quality"):
+            hq_count += 1
+        if m.get("bg_music"):
+            bgm_count += 1
+        if m.get("total_turns"):
+            turn_counts.append(m["total_turns"])
+
+    # Playback
+    turn_events = {}
+    session_listen_times = {}
+    completions = 0
+    total_sessions_playback = 0
+    for m in playback_metrics:
+        sid = m.get("session_id")
+        if m.get("event_type") == "turn_exit" and m.get("turn_index") is not None:
+            idx = m["turn_index"]
+            if idx not in turn_events:
+                turn_events[idx] = {"exit_count": 0, "total_listen": 0}
+            turn_events[idx]["exit_count"] += 1
+            if m.get("listen_duration_s"):
+                turn_events[idx]["total_listen"] += m["listen_duration_s"]
+        if sid and m.get("total_listen_time_s"):
+            session_listen_times[sid] = max(session_listen_times.get(sid, 0), m["total_listen_time_s"])
+        if m.get("event_type") == "complete":
+            completions += 1
+        if sid:
+            total_sessions_playback = max(total_sessions_playback, len(set(session_listen_times.keys())))
+
+    top_exit_turns = sorted(
+        [{"turn_index": k, "exit_count": v["exit_count"],
+          "avg_listen_duration_s": round(v["total_listen"] / max(1, v["exit_count"]), 2)} for k, v in turn_events.items()],
+        key=lambda x: x["exit_count"], reverse=True
+    )[:10]
+
+    avg_listen_duration = round(sum(session_listen_times.values()) / max(1, len(session_listen_times)), 1)
+    completion_rate = round(completions / max(1, len(session_listen_times)), 4)
+
+    return jsonify({
+        "input_layer": {
+            "total_articles": total_articles,
+            "source_distribution": source_dist,
+            "avg_article_length": round(sum(article_lengths) / len(article_lengths)) if article_lengths else 0,
+            "parse_failure_rate": round(parse_failures / max(1, total_articles), 4),
+            "platform_distribution": platform_dist,
+            "has_native_headers_rate": round(has_native_headers_count / max(1, total_articles), 4),
+            "avg_header_count": round(sum(header_counts) / len(header_counts), 1) if header_counts else 0,
+            "avg_compression_ratio": _avg(compression_ratios),
+            "avg_chunk_count": round(sum(chunk_counts) / len(chunk_counts), 1) if chunk_counts else 0,
+            "split_strategy_distribution": split_strategies,
+            "single_shot_rate": round(single_shot_count / total_with_strategy, 4),
+            "fallback_trigger_rate": round(fallback_count / total_with_strategy, 4),
+            "avg_chunk_length": round(sum(chunk_lengths) / len(chunk_lengths)) if chunk_lengths else 0,
+        },
+        "generation_quality": {
+            "avg_keyword_coverage": _avg(coverage_vals),
+            "avg_faithfulness": _avg(faith_vals),
+            "avg_q2_score": _avg(q2_scores),
+            "avg_role_distinction": _avg(role_dist_vals),
+            "format_failure_rate": round(format_failures / max(1, len(generation_metrics)), 4),
+            "daily_trend": daily_trend_list,
+            "model_distribution": model_dist,
+            "prompt_mode_distribution": prompt_mode_dist,
+            "split_strategy_distribution": split_strategy_gen,
+            "avg_output_length_chars": round(sum(output_lengths) / len(output_lengths)) if output_lengths else 0,
+            "avg_expansion_ratio": _avg(expansion_ratios),
+            "avg_llm_time_ms": round(sum(llm_times) / len(llm_times)) if llm_times else 0,
+            "avg_distinct_1": _avg(distinct_1_vals),
+            "avg_distinct_2": _avg(distinct_2_vals),
+            "avg_content_accuracy_score": _avg(content_scores),
+            "avg_colloquial_score": _avg(colloquial_scores),
+            "avg_role_difference_score": _avg(role_diff_scores),
+            "avg_scene_fit_score": _avg(scene_scores),
+            "speaker_format_rate": round(speaker_format_count / max(1, len(generation_metrics)), 4),
+            "avg_chunk_count": round(sum(chunk_count_gen) / len(chunk_count_gen), 1) if chunk_count_gen else 0,
+            "avg_total_turns": round(sum(total_turns_list) / len(total_turns_list), 1) if total_turns_list else 0,
+            "avg_turn_length": _avg(avg_turn_lengths),
+            "avg_question_ratio": _avg(question_ratios),
+            "avg_exclamation_ratio": _avg(exclamation_ratios),
+            "avg_filler_density": _avg(filler_densities),
+            "avg_pause_density": _avg(pause_densities),
+            "avg_emotion_tag_rate": _avg(emotion_tag_rates),
+            "avg_role_violation_rate": _avg(role_violation_rates),
+            # Second-tier metrics
+            "avg_numeric_hallucination_rate": _avg(numeric_hall_vals),
+            "avg_entity_hallucination_rate": _avg(entity_hall_vals),
+            "avg_keyword_omission_rate": _avg(omission_vals),
+            "avg_coherence_score": _avg(coherence_vals),
+            "avg_coherence_std": _avg(coherence_std_vals),
+            "avg_opening_closing_score": _avg(oc_vals),
+            "opening_guest_first_rate": round(opening_guest_first_count / max(1, len(generation_metrics)), 4),
+            "closing_host_last_rate": round(closing_host_last_count / max(1, len(generation_metrics)), 4),
+            "avg_chunk_transition_score": _avg(chunk_transition_vals),
+        },
+        "tts": {
+            "total_sessions": len(all_tts),
+            "failure_rate": round(tts_failures / max(1, len(all_tts)), 4),
+            "emotion_distribution": emotion_dist,
+            "voice_distribution": voice_dist,
+            "avg_tts_time_ms": round(sum(tts_times) / len(tts_times)) if tts_times else 0,
+            "avg_audio_duration_s": round(sum(audio_durations) / len(audio_durations), 1) if audio_durations else 0,
+            "high_quality_rate": round(hq_count / max(1, len(all_tts)), 4),
+            "bg_music_rate": round(bgm_count / max(1, len(all_tts)), 4),
+            "avg_total_turns": round(sum(turn_counts) / len(turn_counts), 1) if turn_counts else 0,
+        },
+        "playback": {
+            "avg_completion_rate": completion_rate,
+            "avg_listen_duration_s": avg_listen_duration,
+            "top_exit_turns": top_exit_turns,
+            "total_sessions": len(session_listen_times),
+        },
+        "user_actions": {
+            "total": total_user_actions,
+            "replay": user_action_counts.get("replay", 0),
+            "regenerate": user_action_counts.get("regenerate", 0),
+            "edit_generate": user_action_counts.get("edit_generate", 0),
+        },
+    })
+
+
+@app.route("/api/metrics/user_action", methods=["POST"])
+def api_metrics_user_action():
+    """Report user actions: replay, regenerate, edit_generate."""
+    data = request.get_json(force=True) or {}
+    entry = {
+        "session_id": data.get("session_id"),
+        "action_type": data.get("action_type"),  # replay | regenerate | edit_generate
+        "article_title": data.get("article_title", ""),
+        "platform": data.get("platform", ""),
+        "input_type": data.get("input_type", ""),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_metrics(METRICS_USER_ACTION_PATH, entry)
+    return jsonify({"status": "ok"})
+
+
+# ── API 用量统计 ──
+
+@app.route("/api/usage/models", methods=["GET"])
+def api_usage_models():
+    """返回可用模型列表（含标签、厂商、定价信息）。"""
+    models = []
+    for key, meta in MODEL_MAP.items():
+        prices = MODEL_PRICES.get(key, {"input": 0, "output": 0})
+        models.append({
+            "id": key,
+            "label": meta["label"],
+            "provider": meta["provider"],
+            "desc": meta["desc"],
+            "price_input_per_m": prices["input"],
+            "price_output_per_m": prices["output"],
+        })
+    return jsonify({"models": models})
+
+
+@app.route("/api/usage/stats", methods=["GET"])
+def api_usage_stats():
+    """Aggregate API usage from JSONL log."""
+    days = int(request.args.get("days", "30"))
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    total_requests = 0
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_cost = 0.0
+    model_stats = {}
+    daily_stats = {}
+
+    if not os.path.exists(USAGE_LOG_PATH):
+        return jsonify({"total_requests": 0, "total_cost": 0, "model_stats": {}, "daily_stats": [], "days": days})
+
+    with open(USAGE_LOG_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            ts = entry.get("timestamp", "")
+            if ts < cutoff:
+                continue
+
+            total_requests += 1
+            pt = entry.get("prompt_tokens", 0)
+            ct = entry.get("completion_tokens", 0)
+            cost = entry.get("cost_usd", 0)
+            total_prompt_tokens += pt
+            total_completion_tokens += ct
+            total_cost += cost
+
+            model = entry.get("model", "unknown")
+            if model not in model_stats:
+                model_stats[model] = {"requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0}
+            model_stats[model]["requests"] += 1
+            model_stats[model]["prompt_tokens"] += pt
+            model_stats[model]["completion_tokens"] += ct
+            model_stats[model]["cost"] += cost
+
+            day = ts[:10]  # YYYY-MM-DD
+            if day not in daily_stats:
+                daily_stats[day] = {"requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0}
+            daily_stats[day]["requests"] += 1
+            daily_stats[day]["prompt_tokens"] += pt
+            daily_stats[day]["completion_tokens"] += ct
+            daily_stats[day]["cost"] += cost
+
+    # Round costs
+    for m in model_stats.values():
+        m["cost"] = round(m["cost"], 6)
+    for d in daily_stats.values():
+        d["cost"] = round(d["cost"], 6)
+
+    return jsonify({
+        "total_requests": total_requests,
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+        "total_cost": round(total_cost, 6),
+        "model_stats": model_stats,
+        "daily_stats": [{"date": k, **v} for k, v in sorted(daily_stats.items())],
+        "days": days,
+    })
+
+
+@app.route("/api/metrics/heatmap/<session_id>", methods=["GET"])
+def api_metrics_heatmap(session_id: str):
+    """Return per-turn playback stats for a single session."""
+    playback_metrics = _load_metrics(METRICS_PLAYBACK_PATH, days=30)
+    session_events = [m for m in playback_metrics if m.get("session_id") == session_id]
+
+    session = _session_get(session_id)
+    script = session.get("full_script", []) if session else []
+
+    turn_stats = {}
+    for m in session_events:
+        idx = m.get("turn_index")
+        if idx is None:
+            continue
+        if idx not in turn_stats:
+            turn_stats[idx] = {"listen_count": 0, "exit_count": 0, "total_listen": 0}
+        if m.get("event_type") == "turn_start":
+            turn_stats[idx]["listen_count"] += 1
+        elif m.get("event_type") == "turn_exit":
+            turn_stats[idx]["exit_count"] += 1
+            if m.get("listen_duration_s"):
+                turn_stats[idx]["total_listen"] += m["listen_duration_s"]
+
+    turns = []
+    for i, turn in enumerate(script):
+        stats = turn_stats.get(i, {"listen_count": 0, "exit_count": 0, "total_listen": 0})
+        exits = stats["exit_count"]
+        turns.append({
+            "index": i,
+            "speaker": turn.get("speaker", ""),
+            "text": turn.get("text", "")[:60],
+            "listen_count": stats["listen_count"],
+            "exit_count": exits,
+            "avg_listen_duration_s": round(stats["total_listen"] / max(1, exits), 2) if exits > 0 else 0,
+        })
+
+    return jsonify({
+        "session_id": session_id,
+        "total_turns": len(script),
+        "turns": turns,
+    })
+
+
+# ── Significance Testing (no external deps) ──
+
+def _normal_cdf(x: float) -> float:
+    """Standard normal CDF using math.erf (built-in)."""
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+def _z_test_proportions(count1: int, n1: int, count2: int, n2: int) -> dict:
+    """Two-proportion z-test. Returns {z, p_value, significant}."""
+    if n1 == 0 or n2 == 0:
+        return {"z": 0, "p_value": 1.0, "significant": False}
+    p1 = count1 / n1
+    p2 = count2 / n2
+    p_pool = (count1 + count2) / (n1 + n2)
+    se = math.sqrt(p_pool * (1 - p_pool) * (1/n1 + 1/n2))
+    if se == 0:
+        return {"z": 0, "p_value": 1.0, "significant": False}
+    z = (p1 - p2) / se
+    p_value = 2 * (1 - _normal_cdf(abs(z)))
+    return {"z": round(z, 4), "p_value": round(p_value, 4), "significant": p_value < 0.05}
+
+def _t_test_independent(mean1: float, var1: float, n1: int, mean2: float, var2: float, n2: int) -> dict:
+    """Welch's t-test for independent samples. Returns {t, p_value, significant}."""
+    if n1 < 2 or n2 < 2:
+        return {"t": 0, "p_value": 1.0, "significant": False}
+    se = math.sqrt(var1/n1 + var2/n2)
+    if se == 0:
+        return {"t": 0, "p_value": 1.0, "significant": False}
+    t = (mean1 - mean2) / se
+    num = (var1/n1 + var2/n2)**2
+    den = (var1/n1)**2/(n1-1) + (var2/n2)**2/(n2-1)
+    df = num / den if den > 0 else min(n1, n2) - 1
+    p_value = 2 * (1 - _normal_cdf(abs(t)))
+    return {"t": round(t, 4), "df": round(df, 2), "p_value": round(p_value, 4), "significant": p_value < 0.05}
+
+
+# ── Experiments API ──
+
+def _load_experiments() -> list[dict]:
+    if not EXPERIMENTS_PATH.exists():
+        return []
+    experiments = []
+    with open(EXPERIMENTS_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    experiments.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    return experiments
+
+def _save_experiments(experiments: list[dict]):
+    with open(EXPERIMENTS_PATH, "w", encoding="utf-8") as f:
+        for e in experiments:
+            f.write(json.dumps(e, ensure_ascii=False, default=str) + "\n")
+
+def _load_running_experiments() -> list[dict]:
+    return [e for e in _load_experiments() if e.get("status") == "running"]
+
+def _record_assignment(request_id: str, experiment_id: str, variant_name: str, input_length: int):
+    entry = {
+        "request_id": request_id,
+        "experiment_id": experiment_id,
+        "variant_name": variant_name,
+        "input_length": input_length,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_metrics(EXP_ASSIGNMENTS_PATH, entry)
+
+import hashlib
+
+def _assign_experiment(request_id: str, input_length: int) -> dict | None:
+    """Check running experiments and assign variant. Returns config override or None."""
+    experiments = _load_running_experiments()
+    for exp in experiments:
+        hash_val = int(hashlib.md5(f"{exp['id']}:{request_id}".encode()).hexdigest(), 16)
+        total_weight = sum(v["weight"] for v in exp["variants"])
+        threshold = (hash_val % 1000) / 1000 * total_weight
+        cumsum = 0
+        for variant in exp["variants"]:
+            cumsum += variant["weight"]
+            if threshold <= cumsum:
+                _record_assignment(request_id, exp["id"], variant["name"], input_length)
+                return variant["config"]
+    return None
+
+
+@app.route("/api/experiments", methods=["GET", "POST"])
+def api_experiments():
+    if request.method == "GET":
+        return jsonify({"experiments": _load_experiments()})
+
+    data = request.get_json(force=True) or {}
+    name = data.get("name", "").strip()
+    if not name:
+        return jsonify({"error": "需要实验名称"}), 400
+    exp = {
+        "id": f"exp_{uuid.uuid4().hex[:8]}",
+        "name": name,
+        "description": data.get("description", ""),
+        "status": data.get("status", "running"),
+        "start_date": data.get("start_date", datetime.now(timezone.utc).isoformat()[:10]),
+        "end_date": data.get("end_date"),
+        "traffic_ratio": data.get("traffic_ratio", 0.5),
+        "variants": data.get("variants", []),
+        "target_metrics": data.get("target_metrics", []),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    experiments = _load_experiments()
+    experiments.append(exp)
+    _save_experiments(experiments)
+    return jsonify({"experiment": exp}), 201
+
+
+@app.route("/api/experiments/<exp_id>/results", methods=["GET"])
+def api_experiment_results(exp_id: str):
+    """Aggregate experiment results with significance testing."""
+    experiments = _load_experiments()
+    exp = next((e for e in experiments if e.get("id") == exp_id), None)
+    if not exp:
+        return jsonify({"error": "Experiment not found"}), 404
+
+    assignments = []
+    if EXP_ASSIGNMENTS_PATH.exists():
+        with open(EXP_ASSIGNMENTS_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        a = json.loads(line)
+                        if a.get("experiment_id") == exp_id:
+                            assignments.append(a)
+                    except json.JSONDecodeError:
+                        pass
+
+    generation_metrics = _load_metrics(METRICS_GENERATION_PATH, days=30)
+
+    # Group metrics by variant via request_id matching
+    variant_data = {v["name"]: {"faithfulness": [], "keyword_coverage": [],
+                                "distinct_1": [], "distinct_2": [],
+                                "turns": []}
+                    for v in exp.get("variants", [])}
+
+    for a in assignments:
+        vn = a.get("variant_name")
+        if vn not in variant_data:
+            continue
+        rid = a.get("request_id", "")
+        for m in generation_metrics:
+            if m.get("request_id") == rid:
+                if m.get("faithfulness") is not None:
+                    variant_data[vn]["faithfulness"].append(m["faithfulness"])
+                if m.get("keyword_coverage") is not None:
+                    variant_data[vn]["keyword_coverage"].append(m["keyword_coverage"])
+                if m.get("distinct_1") is not None:
+                    variant_data[vn]["distinct_1"].append(m["distinct_1"])
+                if m.get("distinct_2") is not None:
+                    variant_data[vn]["distinct_2"].append(m["distinct_2"])
+                if m.get("total_turns"):
+                    variant_data[vn]["turns"].append(m["total_turns"])
+                break
+
+    def _avg(vals):
+        return sum(vals) / len(vals) if vals else 0.0
+    def _var(vals):
+        if len(vals) < 2:
+            return 0.0
+        a = _avg(vals)
+        return sum((x - a) ** 2 for x in vals) / (len(vals) - 1)
+
+    variant_stats = {}
+    for vn, data in variant_data.items():
+        variant_stats[vn] = {
+            "sample_size": len(data.get("faithfulness", [])),
+            "avg_faithfulness": round(_avg(data["faithfulness"]), 4),
+            "avg_coverage": round(_avg(data["keyword_coverage"]), 4),
+            "avg_distinct_1": round(_avg(data["distinct_1"]), 4),
+            "avg_distinct_2": round(_avg(data["distinct_2"]), 4),
+            "avg_turns": round(_avg(data["turns"]), 1),
+        }
+
+    # Significance tests (each treatment vs first variant as control)
+    variants = exp.get("variants", [])
+    significant_diffs = []
+    if len(variants) >= 2:
+        control_name = variants[0]["name"]
+        control = variant_data.get(control_name)
+        if control and len(control.get("faithfulness", [])) >= 2:
+            for v in variants[1:]:
+                treatment = variant_data.get(v["name"])
+                if not treatment or len(treatment.get("faithfulness", [])) < 2:
+                    continue
+                for metric in ["faithfulness", "distinct_1"]:
+                    cv = control.get(metric, [])
+                    tv = treatment.get(metric, [])
+                    if len(cv) < 2 or len(tv) < 2:
+                        continue
+                    t_res = _t_test_independent(_avg(cv), _var(cv), len(cv), _avg(tv), _var(tv), len(tv))
+                    lift = (_avg(tv) - _avg(cv)) / max(0.001, _avg(cv))
+                    significant_diffs.append({
+                        "metric": metric,
+                        "control_value": round(_avg(cv), 4),
+                        "treatment_value": round(_avg(tv), 4),
+                        "lift": f"+{lift*100:.1f}%" if lift >= 0 else f"{lift*100:.1f}%",
+                        "p_value": t_res["p_value"],
+                        "significant": t_res["significant"],
+                    })
+
+    return jsonify({
+        "experiment_id": exp_id,
+        "variant_stats": variant_stats,
+        "significant_diffs": significant_diffs,
+    })
+
+
 # ── Startup: init RAG knowledge base (module-level, runs in gunicorn too) ──
 
 _RAG_INIT_DONE = False
@@ -2467,6 +4409,22 @@ def _init_rag():
 
 _init_rag()
 _load_persisted_sessions()
+
+# ── Error Handlers (return JSON, not HTML, so Vite proxy doesn't choke) ──
+@app.errorhandler(400)
+@app.errorhandler(404)
+@app.errorhandler(405)
+@app.errorhandler(500)
+def _json_error(err):
+    code = getattr(err, "code", 500)
+    msg = getattr(err, "description", str(err))
+    logger.error(f"HTTP {code}: {msg}")
+    return jsonify({"error": msg}), code
+
+@app.errorhandler(Exception)
+def _catchall_error(err):
+    logger.exception(f"Unhandled exception: {err}")
+    return jsonify({"error": str(err) or "服务器内部错误"}), 500
 
 if __name__ == "__main__":
     cleanup_thread = threading.Thread(target=_session_cleanup_loop, daemon=True)

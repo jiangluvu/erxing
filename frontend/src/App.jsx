@@ -9,6 +9,8 @@ import GenerationPage from "./pages/GenerationPage";
 import PlayerPage from "./pages/PlayerPage";
 import DetailPage from "./pages/DetailPage";
 import SettingsPage from "./pages/SettingsPage";
+import BrandPage from "./pages/BrandPage";
+import AccountPage from "./pages/AccountPage";
 import SubscriptionPage from "./pages/SubscriptionPage";
 import SearchPage from "./pages/SearchPage";
 import HotPage from "./pages/HotPage";
@@ -19,6 +21,7 @@ import NotesPage from "./pages/NotesPage";
 import LoginPage from "./pages/LoginPage";
 import ScriptEditorPage from "./pages/ScriptEditorPage";
 import MyVoicesPage from "./pages/MyVoicesPage";
+import UsageStatsPage from "./pages/UsageStatsPage";
 
 const pages = {
   home: ZeroStatePage,
@@ -27,6 +30,8 @@ const pages = {
   player: PlayerPage,
   detail: DetailPage,
   settings: SettingsPage,
+  brand: BrandPage,
+  account: AccountPage,
   subscriptions: SubscriptionPage,
   search: SearchPage,
   hot: HotPage,
@@ -37,6 +42,7 @@ const pages = {
   login: LoginPage,
   scriptEditor: ScriptEditorPage,
   myVoices: MyVoicesPage,
+  usage: UsageStatsPage,
 };
 
 export default function App() {

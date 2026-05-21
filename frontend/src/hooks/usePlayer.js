@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useAppStore } from "../store";
-import { addHistory } from "../api";
+import { addHistory, reportPlaybackEvent } from "../api";
 
 export function usePlayer() {
   const audioRef = useRef(null);
   const lastReportRef = useRef(0);
+  const turnEnterRef = useRef(null);
+  const lastTurnIndexRef = useRef(-1);
 
   const isPlaying = useAppStore((s) => s.isPlaying);
   const setIsPlaying = useAppStore((s) => s.setIsPlaying);
@@ -16,6 +18,7 @@ export function usePlayer() {
   const timings = useAppStore((s) => s.timings);
   const setActiveTranscriptIndex = useAppStore((s) => s.setActiveTranscriptIndex);
   const sessionId = useAppStore((s) => s.sessionId);
+  const currentTime = useAppStore((s) => s.currentTime);
 
   const audioUrl = fullAudioUrl || previewAudioUrl;
 
@@ -32,13 +35,36 @@ export function usePlayer() {
       const t = audio.currentTime;
       setCurrentTime(t);
       // Update transcript highlight
+      let idx = -1;
       if (timings.length) {
-        const idx = timings.findIndex(
+        idx = timings.findIndex(
           (tm) => t >= tm.start && t < tm.end
         );
         if (idx >= 0) {
           setActiveTranscriptIndex(idx);
         }
+      }
+      // Turn-level playback tracking
+      if (sessionId && idx >= 0 && idx !== lastTurnIndexRef.current) {
+        // Exit previous turn
+        if (lastTurnIndexRef.current >= 0 && turnEnterRef.current) {
+          reportPlaybackEvent({
+            session_id: sessionId,
+            turn_index: lastTurnIndexRef.current,
+            event_type: "turn_exit",
+            listen_duration_s: Math.round((Date.now() - turnEnterRef.current) / 100 * 10) / 10,
+            total_listen_time_s: Math.floor(t),
+          }).catch(() => {});
+        }
+        // Enter new turn
+        lastTurnIndexRef.current = idx;
+        turnEnterRef.current = Date.now();
+        reportPlaybackEvent({
+          session_id: sessionId,
+          turn_index: idx,
+          event_type: "turn_start",
+          total_listen_time_s: Math.floor(t),
+        }).catch(() => {});
       }
       // Report playback progress every 10s
       if (sessionId && t - lastReportRef.current >= 10) {
@@ -52,11 +78,35 @@ export function usePlayer() {
     };
     const onEnded = () => {
       setIsPlaying(false);
+      if (sessionId && lastTurnIndexRef.current >= 0 && turnEnterRef.current) {
+        reportPlaybackEvent({
+          session_id: sessionId,
+          turn_index: lastTurnIndexRef.current,
+          event_type: "turn_exit",
+          listen_duration_s: Math.round((Date.now() - turnEnterRef.current) / 100 * 10) / 10,
+          total_listen_time_s: Math.floor(audio.currentTime || 0),
+        }).catch(() => {});
+        lastTurnIndexRef.current = -1;
+        turnEnterRef.current = null;
+      }
+    };
+
+    const onBeforeUnload = () => {
+      if (sessionId && lastTurnIndexRef.current >= 0 && turnEnterRef.current) {
+        reportPlaybackEvent({
+          session_id: sessionId,
+          turn_index: lastTurnIndexRef.current,
+          event_type: "exit",
+          listen_duration_s: Math.round((Date.now() - turnEnterRef.current) / 100 * 10) / 10,
+          total_listen_time_s: Math.floor(currentTime),
+        }).catch(() => {});
+      }
     };
 
     audio.addEventListener("loadedmetadata", onLoadedMetadata);
     audio.addEventListener("timeupdate", onTimeUpdate);
     audio.addEventListener("ended", onEnded);
+    window.addEventListener("beforeunload", onBeforeUnload);
 
     // If we had a previous audio, try to preserve time
     return () => {
@@ -64,9 +114,10 @@ export function usePlayer() {
       audio.removeEventListener("loadedmetadata", onLoadedMetadata);
       audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("ended", onEnded);
+      window.removeEventListener("beforeunload", onBeforeUnload);
       audioRef.current = null;
     };
-  }, [audioUrl, timings, setDuration, setCurrentTime, setIsPlaying, setActiveTranscriptIndex, sessionId]);
+  }, [audioUrl, timings, setDuration, setCurrentTime, setIsPlaying, setActiveTranscriptIndex, sessionId, currentTime]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;

@@ -1,16 +1,15 @@
 import {
   Sparkles,
-  Search,
   Library,
+  Music,
+  Mic,
   Rss,
   Flame,
   Plus,
-  LogIn,
+  User,
   Clock,
   Heart,
   FileText,
-  Settings,
-  Mic,
 } from "lucide-react";
 import { useAppStore } from "../store";
 
@@ -24,11 +23,9 @@ const collectionItems = [
 ];
 
 const toolItems = [
-  { id: "myVoices", label: "我的声音", icon: Mic },
   { id: "history", label: "历史记录", icon: Clock },
   { id: "favorites", label: "收藏", icon: Heart },
   { id: "notes", label: "笔记", icon: FileText },
-  { id: "settings", label: "设置", icon: Settings },
 ];
 
 export default function SideNavBar() {
@@ -40,8 +37,9 @@ export default function SideNavBar() {
 
   const navItems = [
     { id: "home", label: "新播客", icon: Sparkles },
-    { id: "search", label: "全局搜索", icon: Search },
     { id: "myPodcasts", label: "我的播客", icon: Library, badge: String(genCount) },
+    { id: "brand", label: "播客工厂", icon: Music },
+    { id: "myVoices", label: "我的声音", icon: Mic },
   ];
 
   const NavLink = ({ item }) => {
@@ -71,7 +69,7 @@ export default function SideNavBar() {
 
   return (
     <aside className="fixed left-0 top-0 h-full w-[240px] bg-[#1a1a1a] border-r border-[#2a2a2a] flex flex-col z-50">
-      <div className="p-6">
+      <div className="p-6 flex-1 overflow-y-auto">
         <h2 className="text-xs font-medium text-slate-500 mb-6">
           欢迎 播刻 新用户!
         </h2>
@@ -88,7 +86,7 @@ export default function SideNavBar() {
           ))}
         </nav>
 
-        <div className="mt-8">
+        <div className="mt-6">
           <h3 className="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">
             探索
           </h3>
@@ -99,7 +97,7 @@ export default function SideNavBar() {
           </nav>
         </div>
 
-        <div className="mt-8">
+        <div className="mt-6">
           <h3 className="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">
             合集
           </h3>
@@ -113,7 +111,7 @@ export default function SideNavBar() {
           </nav>
         </div>
 
-        <div className="mt-8">
+        <div className="mt-6">
           <h3 className="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">
             工具
           </h3>
@@ -125,13 +123,17 @@ export default function SideNavBar() {
         </div>
       </div>
 
-      <div className="mt-auto p-4 border-t border-[#2a2a2a]">
+      <div className="p-4 border-t border-[#2a2a2a]">
         <button
-          onClick={() => setPage("login")}
-          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all"
+          onClick={() => setPage("account")}
+          className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all text-left ${
+            isActive("account")
+              ? "text-white bg-white/5 font-medium"
+              : "text-slate-400 hover:text-white hover:bg-white/5"
+          }`}
         >
-          <LogIn size={18} strokeWidth={2} />
-          <span>注册 / 登录</span>
+          <User size={18} strokeWidth={2} className={isActive("account") ? "text-brand-pink" : ""} />
+          <span>账号信息</span>
         </button>
       </div>
     </aside>

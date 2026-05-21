@@ -58,6 +58,27 @@ export function getExplore(platform = "all") {
   return fetchJSON(`/explore?platform=${encodeURIComponent(platform)}`);
 }
 
+// ============ PARSE SCRIPT (用户自有讲稿) ============
+export async function parseScript({ text, file }) {
+  if (file) {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_BASE}/parse_script`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `解析失败 HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+  return fetchJSON("/parse_script", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
 // ============ PARSE ============
 export function parseArticle({ url, text }) {
   return fetchJSON("/parse", {
@@ -81,10 +102,10 @@ export async function uploadFile(file) {
 }
 
 // ============ GENERATE SCRIPT ============
-export function generateScript({ clean_text }) {
+export function generateScript({ clean_text, model, duration }) {
   return fetchJSON("/generate_script", {
     method: "POST",
-    body: JSON.stringify({ clean_text }),
+    body: JSON.stringify({ clean_text, model, duration }),
   });
 }
 
@@ -234,7 +255,85 @@ export function deleteCollection(id) {
   });
 }
 
+// ============ BGM ============
+export async function uploadBGM(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE}/upload_bgm`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `上传失败 HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export function getBGMs() {
+  return fetchJSON("/bgm");
+}
+
+export function deleteBGM(fileId) {
+  return fetch(`${API_BASE}/bgm/${encodeURIComponent(fileId)}`, {
+    method: "DELETE",
+  });
+}
+
+// ============ USAGE STATS ============
+export function getUsageModels() {
+  return fetchJSON("/usage/models");
+}
+
+export function getUsageStats(days = 30) {
+  return fetchJSON(`/usage/stats?days=${days}`);
+}
+
 // ============ SEARCH ============
 export function search(q) {
   return fetchJSON(`/search?q=${encodeURIComponent(q)}`);
+}
+
+// ============ METRICS ============
+export function reportPlaybackEvent(event) {
+  return fetch(`${API_BASE}/metrics/playback_event`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(event),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+export function getDashboardMetrics(days = 7) {
+  return fetchJSON(`/metrics/dashboard?days=${days}`);
+}
+
+export function getHeatmap(sessionId) {
+  return fetchJSON(`/metrics/heatmap/${encodeURIComponent(sessionId)}`);
+}
+
+// ============ USER ACTIONS ============
+export function reportUserAction({ session_id, action_type, article_title, platform, input_type }) {
+  return fetch(`${API_BASE}/metrics/user_action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id, action_type, article_title, platform, input_type }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+// ============ EXPERIMENTS ============
+export function getExperiments() {
+  return fetchJSON("/experiments");
+}
+
+export function createExperiment(payload) {
+  return fetchJSON("/experiments", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getExperimentResults(expId) {
+  return fetchJSON(`/experiments/${encodeURIComponent(expId)}/results`);
 }

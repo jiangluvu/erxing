@@ -15,9 +15,10 @@ import {
   Music,
   Volume2,
   Save,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useAppStore } from "../store";
-import { generateTTS } from "../api";
+import { generateTTS, getBGMs, reportUserAction } from "../api";
 
 export default function ScriptEditorPage() {
   const setPage = useAppStore((s) => s.setPage);
@@ -29,6 +30,7 @@ export default function ScriptEditorPage() {
   const femaleVoiceId = useAppStore((s) => s.femaleVoiceId);
   const setFemaleVoiceId = useAppStore((s) => s.setFemaleVoiceId);
   const defaultEmotion = useAppStore((s) => s.defaultEmotion);
+  const podcastSettings = useAppStore((s) => s.podcastSettings);
   const [loading, setLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [rawText, setRawText] = useState("");
@@ -38,22 +40,31 @@ export default function ScriptEditorPage() {
   const [openDropdown, setOpenDropdown] = useState(null);
   const dropdownRef = useRef(null);
 
+  // BGM files
+  const [bgmFiles, setBgmFiles] = useState([]);
+
   // Episode audio arrangement overrides
-  const podcastSettings = useAppStore((s) => s.podcastSettings);
   const [activeTab, setActiveTab] = useState("script");
   const [useCustomAudio, setUseCustomAudio] = useState(false);
-  const [episodeAudio, setEpisodeAudio] = useState(() => {
-    const global = podcastSettings || {};
-    return {
-      intro: { enabled: global.intro?.enabled !== false },
-      outro: { enabled: global.outro?.enabled !== false, mode: global.outro?.mode || "template" },
-      body_bgm: {
-        enabled: global.body_bgm?.enabled || false,
-        style: global.body_bgm?.style || "minimal",
-        volume: global.body_bgm?.volume ?? 0.08,
-      },
-    };
-  });
+  const global = podcastSettings || {};
+  const [episodeAudio, setEpisodeAudio] = useState(() => ({
+    intro: {
+      enabled: global.intro?.enabled !== false,
+      preset_id: null,
+    },
+    outro: {
+      enabled: global.outro?.enabled !== false,
+      mode: global.outro?.mode || "template",
+      preset_id: null,
+    },
+    body_bgm: {
+      enabled: global.body_bgm?.enabled || false,
+      style: global.body_bgm?.style || "minimal",
+      volume: global.body_bgm?.volume ?? 0.08,
+      source: global.body_bgm?.custom_path ? "uploaded" : "generated",
+      custom_path: global.body_bgm?.custom_path || null,
+    },
+  }));
 
   const BGM_STYLES = [
     { id: "warm", label: "暖室" },
@@ -69,10 +80,10 @@ export default function ScriptEditorPage() {
   ];
 
   const BUILT_IN_MALE = [
-    { id: "639cdf5253a24b50a18cbdb726acce15", name: "默认男声" },
+    { id: "639cdf5253a24b50a18cbdb726acce15", name: "默认主持" },
   ];
   const BUILT_IN_FEMALE = [
-    { id: "a71b052094fa4505967e262b8cb7d0a6", name: "默认女声" },
+    { id: "a71b052094fa4505967e262b8cb7d0a6", name: "默认嘉宾" },
   ];
 
   useEffect(() => {
@@ -80,6 +91,11 @@ export default function ScriptEditorPage() {
       .then((r) => r.json())
       .then((data) => {
         if (data.voices) setFetchedVoices(data.voices);
+      })
+      .catch(() => {});
+    getBGMs()
+      .then((data) => {
+        if (data.files) setBgmFiles(data.files);
       })
       .catch(() => {});
   }, []);
@@ -95,7 +111,29 @@ export default function ScriptEditorPage() {
   }, []);
 
   // Local editable copy
-  const [script, setScript] = useState(scriptData || []);
+  const [script, setScript] = useState(() => {
+    if (scriptData && scriptData.length > 0) return scriptData;
+    try {
+      const saved = localStorage.getItem("boke_draft_script");
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
+  // Auto-save draft to localStorage
+  useEffect(() => {
+    if (script && script.length > 0) {
+      localStorage.setItem("boke_draft_script", JSON.stringify(script));
+    }
+  }, [script]);
+
+  // When a new script is generated, replace draft and clear storage
+  useEffect(() => {
+    if (scriptData && scriptData.length > 0) {
+      setScript(scriptData);
+      localStorage.removeItem("boke_draft_script");
+    }
+  }, [scriptData]);
 
   const updateTurn = (index, field, value) => {
     const next = [...script];
@@ -110,7 +148,7 @@ export default function ScriptEditorPage() {
 
   const addTurn = (index) => {
     const speaker =
-      script[index]?.speaker === "男声" ? "女声" : "男声";
+      script[index]?.speaker === "主持" ? "嘉宾" : "主持";
     const next = [...script];
     next.splice(index + 1, 0, { speaker, text: "", emotion: defaultEmotion });
     setScript(next);
@@ -118,7 +156,7 @@ export default function ScriptEditorPage() {
 
   const swapSpeaker = (index) => {
     const current = script[index]?.speaker;
-    const nextSpeaker = current === "男声" ? "女声" : "男声";
+    const nextSpeaker = current === "主持" ? "嘉宾" : "主持";
     updateTurn(index, "speaker", nextSpeaker);
   };
 
@@ -131,12 +169,42 @@ export default function ScriptEditorPage() {
 
     setLoading(true);
     try {
+      // Report edit_generate action
+      const sessionId = useAppStore.getState().sessionId;
+      reportUserAction({
+        session_id: sessionId,
+        action_type: "edit_generate",
+      });
       // Persist edited script
       setScriptData(validScript);
-      const voiceMap = { 男声: maleVoiceId, 女声: femaleVoiceId };
+      const voiceMap = { 主持: maleVoiceId, 嘉宾: femaleVoiceId };
       const payload = { script: validScript, voice_map: voiceMap };
       if (useCustomAudio) {
-        payload.arrangement = episodeAudio;
+        const arrangement = {
+          intro: {
+            enabled: episodeAudio.intro.enabled,
+            ...(episodeAudio.intro.preset_id
+              ? { intro_preset_id: episodeAudio.intro.preset_id }
+              : {}),
+          },
+          outro: {
+            enabled: episodeAudio.outro.enabled,
+            mode: episodeAudio.outro.mode,
+            ...(episodeAudio.outro.preset_id
+              ? { outro_preset_id: episodeAudio.outro.preset_id }
+              : {}),
+          },
+          body_bgm: {
+            enabled: episodeAudio.body_bgm.enabled,
+            style: episodeAudio.body_bgm.style,
+            volume: episodeAudio.body_bgm.volume,
+            custom_path:
+              episodeAudio.body_bgm.source === "uploaded"
+                ? episodeAudio.body_bgm.custom_path
+                : null,
+          },
+        };
+        payload.arrangement = arrangement;
       }
       const { blob } = await generateTTS(payload);
       const url = URL.createObjectURL(blob);
@@ -150,8 +218,8 @@ export default function ScriptEditorPage() {
     }
   };
 
-  const yangCount = script.filter((t) => t.speaker === "男声").length;
-  const jiangCount = script.filter((t) => t.speaker === "女声").length;
+  const yangCount = script.filter((t) => t.speaker === "主持").length;
+  const jiangCount = script.filter((t) => t.speaker === "嘉宾").length;
   const totalChars = script.reduce((sum, t) => sum + (t.text?.length || 0), 0);
   const estMinutes = Math.max(1, Math.round(totalChars / 280));
 
@@ -170,6 +238,9 @@ export default function ScriptEditorPage() {
       </div>
     );
   }
+
+  const introPresets = podcastSettings?.intro_presets || [];
+  const outroPresets = podcastSettings?.outro_presets || [];
 
   return (
     <div className="p-10 max-w-3xl mx-auto">
@@ -194,15 +265,16 @@ export default function ScriptEditorPage() {
           <button
             onClick={() => {
               if (!rawMode) {
-                setRawText(script.map((t) => `${t.speaker}：${t.text}`).join("\n"));
+                setRawText(script.map((t) => `${t.speaker === "主持" ? "主持" : "嘉宾"}：${t.text}`).join("\n"));
               } else {
                 // Parse raw text back to script
                 const lines = rawText.split("\n").filter((l) => l.trim());
                 const parsed = [];
-                const pattern = /^(男声|女声)[：:]\s*(.+)/;
+                const pattern = /^(主持|嘉宾)[：:]\s*(.+)/;
+                const speakerMap = { 主持: "主持", 嘉宾: "嘉宾" };
                 for (const line of lines) {
                   const m = line.match(pattern);
-                  if (m) parsed.push({ speaker: m[1], text: m[2].trim() });
+                  if (m) parsed.push({ speaker: speakerMap[m[1]], text: m[2].trim() });
                 }
                 if (parsed.length > 0) setScript(parsed);
               }
@@ -216,6 +288,16 @@ export default function ScriptEditorPage() {
           >
             {rawMode ? <List size={16} /> : <FileText size={16} />}
             <span>{rawMode ? "卡片模式" : "文本模式"}</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab("audio");
+              setUseCustomAudio(true);
+            }}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all bg-white/5 text-slate-400 hover:text-white border border-transparent"
+          >
+            <SlidersHorizontal size={16} />
+            <span>音频设置</span>
           </button>
           <button
             onClick={handleGeneratePodcast}
@@ -238,7 +320,7 @@ export default function ScriptEditorPage() {
           <MessageSquare size={14} />
           {script.length} 轮对话
         </span>
-        <span className="text-slate-600">男声 {yangCount} 轮 · 女声 {jiangCount} 轮</span>
+        <span className="text-slate-600">主持 {yangCount} 轮 · 嘉宾 {jiangCount} 轮</span>
         <span className="text-slate-600">{totalChars} 字</span>
       </div>
 
@@ -252,7 +334,7 @@ export default function ScriptEditorPage() {
           >
             <Mic size={12} className="text-brand-pink" />
             <span>
-              男声：
+              主持：
               {[...BUILT_IN_MALE, ...fetchedVoices].find((v) => v.id === maleVoiceId)?.title ||
                [...BUILT_IN_MALE, ...fetchedVoices].find((v) => v.id === maleVoiceId)?.name ||
                "默认"}
@@ -288,7 +370,7 @@ export default function ScriptEditorPage() {
           >
             <Mic size={12} className="text-brand-tertiary" />
             <span>
-              女声：
+              嘉宾：
               {[...BUILT_IN_FEMALE, ...fetchedVoices].find((v) => v.id === femaleVoiceId)?.title ||
                [...BUILT_IN_FEMALE, ...fetchedVoices].find((v) => v.id === femaleVoiceId)?.name ||
                "默认"}
@@ -348,14 +430,14 @@ export default function ScriptEditorPage() {
       {rawMode ? (
         <div className="bg-[#161618] border border-[#2a2a2a] rounded-2xl overflow-hidden">
           <div className="px-4 py-3 border-b border-[#2a2a2a] flex items-center justify-between">
-            <span className="text-xs text-slate-500">每行格式：男声：... 或 女声：...</span>
+            <span className="text-xs text-slate-500">每行格式：主持：... 或 嘉宾：...</span>
             <span className="text-xs text-slate-600">{rawText.length} 字符</span>
           </div>
           <textarea
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             className="w-full h-[60vh] bg-[#1a1a1c] p-4 text-sm text-white placeholder-slate-600 resize-none outline-none leading-relaxed font-mono"
-            placeholder="男声：...&#10;女声：..."
+            placeholder="主持：...&#10;嘉宾：..."
           />
         </div>
       ) : (
@@ -371,13 +453,13 @@ export default function ScriptEditorPage() {
                   <button
                     onClick={() => swapSpeaker(index)}
                     className={`w-12 h-12 rounded-xl flex items-center justify-center text-xs font-bold transition-all ${
-                      turn.speaker === "男声"
+                      turn.speaker === "主持"
                         ? "bg-brand-pink/10 text-brand-pink hover:bg-brand-pink/20"
                         : "bg-brand-tertiary/10 text-brand-tertiary hover:bg-brand-tertiary/20"
                     }`}
                     title="点击切换发言人"
                   >
-                    {turn.speaker === "男声" ? "男声" : "女声"}
+                    {turn.speaker === "主持" ? "主持" : "嘉宾"}
                   </button>
                   <input
                     value={turn.emotion || ""}
@@ -395,7 +477,7 @@ export default function ScriptEditorPage() {
                     onChange={(e) => updateTurn(index, "text", e.target.value)}
                     className="w-full bg-[#1a1a1c] border border-[#2a2a2a] rounded-lg p-3 text-sm text-white placeholder-slate-600 resize-none outline-none focus:border-brand-pink/30 transition-all leading-relaxed"
                     rows={Math.max(2, Math.ceil((turn.text?.length || 0) / 40))}
-                    placeholder={`${turn.speaker}说...`}
+                    placeholder={`${turn.speaker === "主持" ? "主持" : "嘉宾"}说...`}
                   />
                 </div>
 
@@ -428,7 +510,7 @@ export default function ScriptEditorPage() {
           setScript((prev) => [
             ...prev,
             {
-              speaker: prev[prev.length - 1]?.speaker === "男声" ? "女声" : "男声",
+              speaker: prev[prev.length - 1]?.speaker === "主持" ? "嘉宾" : "主持",
               text: "",
               emotion: defaultEmotion,
             },
@@ -468,13 +550,12 @@ export default function ScriptEditorPage() {
           </div>
 
           {/* Intro */}
-          <div className="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Mic size={14} className="text-brand-tertiary" />
-              <span className="text-sm font-medium text-white">开场白</span>
-            </div>
+          <div className="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-500">包含开场白</span>
+              <div className="flex items-center gap-2">
+                <Mic size={14} className="text-brand-tertiary" />
+                <span className="text-sm font-medium text-white">开场白</span>
+              </div>
               <button
                 onClick={() =>
                   setEpisodeAudio((prev) => ({
@@ -494,6 +575,30 @@ export default function ScriptEditorPage() {
                 />
               </button>
             </div>
+
+            {episodeAudio.intro.enabled && (
+              <div className="pl-4 border-l border-[#2a2a2a] space-y-3">
+                <div>
+                  <label className="text-[10px] text-slate-500 mb-1 block">使用开场白模板（可选）</label>
+                  <select
+                    value={episodeAudio.intro.preset_id || ""}
+                    disabled={!useCustomAudio}
+                    onChange={(e) =>
+                      setEpisodeAudio((prev) => ({
+                        ...prev,
+                        intro: { ...prev.intro, preset_id: e.target.value || null },
+                      }))
+                    }
+                    className="w-full bg-[#1a1a1c] border border-[#2a2a2a] rounded-lg py-1.5 px-2 text-xs text-white outline-none focus:border-brand-pink/30 disabled:opacity-40"
+                  >
+                    <option value="">使用全局默认开场白</option>
+                    {introPresets.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Body BGM */}
@@ -526,43 +631,128 @@ export default function ScriptEditorPage() {
             {episodeAudio.body_bgm.enabled && (
               <div className="space-y-3 pl-4 border-l border-[#2a2a2a]">
                 <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">风格</label>
-                  <select
-                    value={episodeAudio.body_bgm.style}
-                    disabled={!useCustomAudio}
-                    onChange={(e) =>
-                      setEpisodeAudio((prev) => ({
-                        ...prev,
-                        body_bgm: { ...prev.body_bgm, style: e.target.value },
-                      }))
-                    }
-                    className="w-full bg-[#1a1a1c] border border-[#2a2a2a] rounded-lg py-1.5 px-2 text-xs text-white outline-none focus:border-brand-pink/30 disabled:opacity-40"
-                  >
-                    {BGM_STYLES.map((s) => (
-                      <option key={s.id} value={s.id}>{s.label}</option>
-                    ))}
-                  </select>
+                  <label className="text-[10px] text-slate-500 mb-1 block">来源</label>
+                  <div className="flex gap-2">
+                    <button
+                      disabled={!useCustomAudio}
+                      onClick={() =>
+                        setEpisodeAudio((prev) => ({
+                          ...prev,
+                          body_bgm: { ...prev.body_bgm, source: "generated", custom_path: null },
+                        }))
+                      }
+                      className={`flex-1 py-1.5 rounded-lg text-xs transition-all disabled:opacity-40 ${
+                        episodeAudio.body_bgm.source !== "uploaded"
+                          ? "bg-brand-pink/10 text-brand-pink border border-brand-pink/20"
+                          : "bg-white/5 text-slate-400 border border-transparent hover:bg-white/10"
+                      }`}
+                    >
+                      程序生成
+                    </button>
+                    <button
+                      disabled={!useCustomAudio}
+                      onClick={() =>
+                        setEpisodeAudio((prev) => ({
+                          ...prev,
+                          body_bgm: { ...prev.body_bgm, source: "uploaded" },
+                        }))
+                      }
+                      className={`flex-1 py-1.5 rounded-lg text-xs transition-all disabled:opacity-40 ${
+                        episodeAudio.body_bgm.source === "uploaded"
+                          ? "bg-brand-pink/10 text-brand-pink border border-brand-pink/20"
+                          : "bg-white/5 text-slate-400 border border-transparent hover:bg-white/10"
+                      }`}
+                    >
+                      自定义上传
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <label className="text-[10px] text-slate-500 mb-1 block">
-                    音量: {Math.round(episodeAudio.body_bgm.volume * 100)}%
-                  </label>
-                  <input
-                    type="range"
-                    min={0.02}
-                    max={0.2}
-                    step={0.01}
-                    disabled={!useCustomAudio}
-                    value={episodeAudio.body_bgm.volume}
-                    onChange={(e) =>
-                      setEpisodeAudio((prev) => ({
-                        ...prev,
-                        body_bgm: { ...prev.body_bgm, volume: parseFloat(e.target.value) },
-                      }))
-                    }
-                    className="w-full accent-brand-pink disabled:opacity-40"
-                  />
-                </div>
+
+                {episodeAudio.body_bgm.source !== "uploaded" ? (
+                  <>
+                    <div>
+                      <label className="text-[10px] text-slate-500 mb-1 block">风格</label>
+                      <select
+                        value={episodeAudio.body_bgm.style}
+                        disabled={!useCustomAudio}
+                        onChange={(e) =>
+                          setEpisodeAudio((prev) => ({
+                            ...prev,
+                            body_bgm: { ...prev.body_bgm, style: e.target.value },
+                          }))
+                        }
+                        className="w-full bg-[#1a1a1c] border border-[#2a2a2a] rounded-lg py-1.5 px-2 text-xs text-white outline-none focus:border-brand-pink/30 disabled:opacity-40"
+                      >
+                        {BGM_STYLES.map((s) => (
+                          <option key={s.id} value={s.id}>{s.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 mb-1 block">
+                        音量: {Math.round(episodeAudio.body_bgm.volume * 100)}%
+                      </label>
+                      <input
+                        type="range"
+                        min={0.02}
+                        max={0.2}
+                        step={0.01}
+                        disabled={!useCustomAudio}
+                        value={episodeAudio.body_bgm.volume}
+                        onChange={(e) =>
+                          setEpisodeAudio((prev) => ({
+                            ...prev,
+                            body_bgm: { ...prev.body_bgm, volume: parseFloat(e.target.value) },
+                          }))
+                        }
+                        className="w-full accent-brand-pink disabled:opacity-40"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block">选择已上传的背景音乐</label>
+                    {bgmFiles.length === 0 ? (
+                      <div className="text-xs text-slate-500 bg-[#1a1a1c] border border-[#2a2a2a] rounded-lg p-3">
+                        暂无上传的背景音乐，请前往「设置 → 播客品牌 → 正文背景音乐」上传
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {bgmFiles.map((f) => (
+                          <div
+                            key={f.id}
+                            className={`flex items-center justify-between bg-[#1a1a1c] border rounded-lg px-3 py-2 ${
+                              episodeAudio.body_bgm.custom_path === f.id
+                                ? "border-brand-pink/30"
+                                : "border-[#2a2a2a]"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <Music size={12} className="text-slate-500 flex-shrink-0" />
+                              <span className="text-xs text-white truncate">{f.name}</span>
+                            </div>
+                            <button
+                              disabled={!useCustomAudio}
+                              onClick={() =>
+                                setEpisodeAudio((prev) => ({
+                                  ...prev,
+                                  body_bgm: { ...prev.body_bgm, custom_path: f.id },
+                                }))
+                              }
+                              className={`px-2 py-0.5 rounded text-[10px] transition-colors disabled:opacity-40 ${
+                                episodeAudio.body_bgm.custom_path === f.id
+                                  ? "bg-brand-pink/10 text-brand-pink"
+                                  : "bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white"
+                              }`}
+                            >
+                              {episodeAudio.body_bgm.custom_path === f.id ? "已选" : "选用"}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -595,28 +785,50 @@ export default function ScriptEditorPage() {
             </div>
 
             {episodeAudio.outro.enabled && (
-              <div className="pl-4 border-l border-[#2a2a2a]">
-                <label className="text-[10px] text-slate-500 mb-1 block">模式</label>
-                <div className="flex gap-2">
-                  {OUTRO_MODES.map((m) => (
-                    <button
-                      key={m.id}
-                      disabled={!useCustomAudio}
-                      onClick={() =>
-                        setEpisodeAudio((prev) => ({
-                          ...prev,
-                          outro: { ...prev.outro, mode: m.id },
-                        }))
-                      }
-                      className={`flex-1 py-1.5 rounded-lg text-xs transition-all disabled:opacity-40 ${
-                        episodeAudio.outro.mode === m.id
-                          ? "bg-brand-pink/10 text-brand-pink border border-brand-pink/20"
-                          : "bg-white/5 text-slate-400 border border-transparent hover:bg-white/10"
-                      }`}
-                    >
-                      {m.label}
-                    </button>
-                  ))}
+              <div className="pl-4 border-l border-[#2a2a2a] space-y-3">
+                <div>
+                  <label className="text-[10px] text-slate-500 mb-1 block">模式</label>
+                  <div className="flex gap-2">
+                    {OUTRO_MODES.map((m) => (
+                      <button
+                        key={m.id}
+                        disabled={!useCustomAudio}
+                        onClick={() =>
+                          setEpisodeAudio((prev) => ({
+                            ...prev,
+                            outro: { ...prev.outro, mode: m.id },
+                          }))
+                        }
+                        className={`flex-1 py-1.5 rounded-lg text-xs transition-all disabled:opacity-40 ${
+                          episodeAudio.outro.mode === m.id
+                            ? "bg-brand-pink/10 text-brand-pink border border-brand-pink/20"
+                            : "bg-white/5 text-slate-400 border border-transparent hover:bg-white/10"
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-slate-500 mb-1 block">使用片尾模板（可选）</label>
+                  <select
+                    value={episodeAudio.outro.preset_id || ""}
+                    disabled={!useCustomAudio}
+                    onChange={(e) =>
+                      setEpisodeAudio((prev) => ({
+                        ...prev,
+                        outro: { ...prev.outro, preset_id: e.target.value || null },
+                      }))
+                    }
+                    className="w-full bg-[#1a1a1c] border border-[#2a2a2a] rounded-lg py-1.5 px-2 text-xs text-white outline-none focus:border-brand-pink/30 disabled:opacity-40"
+                  >
+                    <option value="">使用全局默认片尾</option>
+                    {outroPresets.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             )}

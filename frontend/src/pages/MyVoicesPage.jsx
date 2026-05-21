@@ -155,7 +155,7 @@ export default function MyVoicesPage() {
             <input
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="例如：我的男声"
+              placeholder="例如：我的主持音色"
               className="w-full bg-[#1a1a1c] border border-[#2a2a2a] rounded-lg py-2 px-3 text-xs text-white placeholder-slate-600 outline-none focus:border-brand-pink/30 transition-all"
             />
           </div>
@@ -170,7 +170,7 @@ export default function MyVoicesPage() {
                     : "bg-[#1a1a1c] border border-[#2a2a2a] text-slate-400 hover:text-white"
                 }`}
               >
-                男声
+                主持
               </button>
               <button
                 onClick={() => setNewGender("female")}
@@ -180,7 +180,7 @@ export default function MyVoicesPage() {
                     : "bg-[#1a1a1c] border border-[#2a2a2a] text-slate-400 hover:text-white"
                 }`}
               >
-                女声
+                嘉宾
               </button>
             </div>
           </div>
@@ -285,12 +285,12 @@ export default function MyVoicesPage() {
                   </span>
                   {maleVoiceId === voice.id && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-brand-pink/10 text-brand-pink">
-                      当前男声
+                      当前主持
                     </span>
                   )}
                   {femaleVoiceId === voice.id && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-brand-tertiary/10 text-brand-tertiary">
-                      当前女声
+                      当前嘉宾
                     </span>
                   )}
                 </div>
@@ -307,7 +307,7 @@ export default function MyVoicesPage() {
                       : "bg-white/5 text-slate-400 hover:text-white border border-transparent"
                   }`}
                 >
-                  设为男声
+                  设为主持
                 </button>
                 <button
                   onClick={() => setFemaleVoiceId(voice.id)}
@@ -317,7 +317,7 @@ export default function MyVoicesPage() {
                       : "bg-white/5 text-slate-400 hover:text-white border border-transparent"
                   }`}
                 >
-                  设为女声
+                  设为嘉宾
                 </button>
                 <button
                   onClick={() => handleDelete(voice.id)}

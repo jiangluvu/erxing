@@ -14,17 +14,34 @@ import {
   Plus,
   X,
   Trash2,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useAppStore } from "../store";
-import { getDraft, parseArticle, generateScript, uploadFile } from "../api";
+import { getDraft, parseArticle, generateScript, uploadFile, parseScript } from "../api";
 
-const tabs = ["链接", "文本", "上传", "探索"];
+const modelLabelMap = {
+  "deepseek-v4": "DeepSeek V4", "deepseek-v4-flash": "DeepSeek V4 Flash",
+  "gpt-4o": "GPT-4o", "gpt-4o-mini": "GPT-4o Mini",
+  "claude-haiku-4-5": "Claude Haiku", "claude-sonnet-4-6": "Claude Sonnet",
+  "claude-opus-4-7": "Claude Opus",
+  "qwen3-72b": "Qwen3 72B", "qwen3-32b": "Qwen3 32B",
+  "gemini-2.5-pro": "Gemini 2.5 Pro",
+};
+const durationLabelMap = {
+  free: "自由适应",
+  short: "5–15 分钟",
+  long: "15–30 分钟",
+  extra_long: "30–60 分钟",
+  ultra_long: "60 分钟以上",
+};
+
+const tabs = ["链接", "文本", "上传", "我有讲稿", "探索"];
 
 const MALE_VOICES = [
-  { id: "639cdf5253a24b50a18cbdb726acce15", name: "默认男声" },
+  { id: "639cdf5253a24b50a18cbdb726acce15", name: "默认主持" },
 ];
 const FEMALE_VOICES = [
-  { id: "a71b052094fa4505967e262b8cb7d0a6", name: "默认女声" },
+  { id: "a71b052094fa4505967e262b8cb7d0a6", name: "默认嘉宾" },
 ];
 const EMOTIONS = [
   { value: "正常", label: "正常", desc: "自然平稳" },
@@ -38,6 +55,7 @@ const placeholders = {
   链接: "粘贴公众号/知乎文章链接，一键生成播客文稿...",
   文本: "粘贴或输入文章正文...",
   上传: "拖拽文章文件到此处，或点击上传...",
+  我有讲稿: "粘贴对话稿（主持：...\\n嘉宾：...），或上传文件/图片...",
   探索: "输入你想探讨的话题，AI 帮你写成播客稿件...",
 };
 
@@ -59,9 +77,16 @@ export default function ZeroStatePage() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
+  // Script parsing state (for 我有讲稿 tab)
+  const [scriptParsing, setScriptParsing] = useState(false);
+  const [scriptFile, setScriptFile] = useState(null);
+  const [scriptFileName, setScriptFileName] = useState("");
+
   const setPage = useAppStore((s) => s.setPage);
   const setScriptData = useAppStore((s) => s.setScriptData);
   const showToast = useAppStore((s) => s.showToast);
+  const selectedModel = useAppStore((s) => s.selectedModel);
+  const selectedDuration = useAppStore((s) => s.selectedDuration);
 
   // Voice config
   const maleVoiceId = useAppStore((s) => s.maleVoiceId);
@@ -142,6 +167,8 @@ export default function ZeroStatePage() {
       showToast("正在生成文稿...", "info");
       const result = await generateScript({
         clean_text: parsed.clean_text,
+        model: selectedModel,
+        duration: selectedDuration,
       });
       // Apply default emotion override if user selected a non-default style
       const script = result.script || [];
@@ -158,6 +185,43 @@ export default function ZeroStatePage() {
       showToast(e.message || "生成失败", "error");
     } finally {
       setScriptLoading(false);
+    }
+  };
+
+  const handleParseScript = async () => {
+    if (scriptFile) {
+      setScriptParsing(true);
+      try {
+        const result = await parseScript({ file: scriptFile });
+        setScriptData(result.script || []);
+        setPage("scriptEditor");
+        showToast(`解析成功，共 ${result.total_turns} 轮对话`, "success");
+      } catch (e) {
+        showToast(e.message || "解析失败", "error");
+      } finally {
+        setScriptParsing(false);
+      }
+      return;
+    }
+    const trimmed = inputValue.trim();
+    if (!trimmed || trimmed.length < 5) {
+      showToast("请输入对话文稿", "error");
+      return;
+    }
+    if (!trimmed.includes("主持") && !trimmed.includes("嘉宾")) {
+      showToast("未识别到对话格式，请确保以「主持：」和「嘉宾：」格式编写", "error");
+      return;
+    }
+    setScriptParsing(true);
+    try {
+      const result = await parseScript({ text: trimmed });
+      setScriptData(result.script || []);
+      setPage("scriptEditor");
+      showToast(`解析成功，共 ${result.total_turns} 轮对话`, "success");
+    } catch (e) {
+      showToast(e.message || "解析失败", "error");
+    } finally {
+      setScriptParsing(false);
     }
   };
 
@@ -257,6 +321,10 @@ export default function ZeroStatePage() {
                     setDraftResult(null);
                     setDraftError(null);
                   }
+                  if (tab !== "我有讲稿") {
+                    setScriptFile(null);
+                    setScriptFileName("");
+                  }
                 }}
                 className={`px-6 py-4 text-sm font-medium transition-all ${
                   activeTab === tab
@@ -311,6 +379,56 @@ export default function ZeroStatePage() {
                   </>
                 )}
               </div>
+            ) : activeTab === "我有讲稿" ? (
+              <div className="space-y-3">
+                <textarea
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  className="w-full h-24 bg-[#1a1a1c] border border-[#2a2a2a] rounded-xl p-4 text-sm text-white placeholder-slate-600 resize-y outline-none focus:border-brand-pink/30 transition-all"
+                  placeholder={'粘贴对话稿，每行格式：主持：... 或 嘉宾：...\n支持上传文件/图片（见下方）'}
+                />
+                <div className="flex items-center gap-3">
+                  {/* File upload button */}
+                  <div className="relative">
+                    <input
+                      id="script-file-upload"
+                      type="file"
+                      className="hidden"
+                      accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) {
+                          if (f.size > 20 * 1024 * 1024) {
+                            showToast("文件超过 20MB 限制", "error");
+                            return;
+                          }
+                          setScriptFile(f);
+                          setScriptFileName(f.name);
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                    <button
+                      onClick={() => document.getElementById("script-file-upload")?.click()}
+                      className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-[#2a2a2a] hover:border-white/20 rounded-xl text-xs text-slate-400 hover:text-white transition-all"
+                    >
+                      <Upload size={14} />
+                      {scriptFileName ? scriptFileName : "上传文稿文件"}
+                    </button>
+                  </div>
+                  {scriptFileName && (
+                    <button
+                      onClick={() => { setScriptFile(null); setScriptFileName(""); }}
+                      className="text-xs text-red-400 hover:text-red-300"
+                    >
+                      清除
+                    </button>
+                  )}
+                  <span className="text-[10px] text-slate-600">
+                    支持 TXT / PDF / DOCX / 图片
+                  </span>
+                </div>
+              </div>
             ) : (
               <textarea
                 value={inputValue}
@@ -319,6 +437,22 @@ export default function ZeroStatePage() {
                 placeholder={placeholders[activeTab]}
               />
             )}
+          </div>
+          {/* Footer */}
+          <div className="px-6 py-3 border-t border-[#2a2a2a] flex items-center justify-between">
+            <button
+              onClick={() => setPage("settings")}
+              className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              <SlidersHorizontal size={14} />
+              <span>生成设置</span>
+            </button>
+            <button
+              onClick={() => setPage("settings")}
+              className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              {modelLabelMap[selectedModel] || "DeepSeek"} · {durationLabelMap[selectedDuration] || "自由适应"}
+            </button>
           </div>
         </div>
 
@@ -401,7 +535,7 @@ export default function ZeroStatePage() {
           <div className="grid grid-cols-3 gap-4">
             {/* Male Voice */}
             <div className="relative">
-              <label className="text-[10px] text-slate-500 mb-1.5 block">男声音色</label>
+              <label className="text-[10px] text-slate-500 mb-1.5 block">主持音色</label>
               <button
                 onClick={() => setOpenDropdown(openDropdown === "male" ? null : "male")}
                 className="w-full flex items-center justify-between bg-[#1a1a1c] border border-[#2a2a2a] hover:border-white/20 rounded-lg py-2 px-3 text-xs text-white transition-all"
@@ -434,7 +568,7 @@ export default function ZeroStatePage() {
 
             {/* Female Voice */}
             <div className="relative">
-              <label className="text-[10px] text-slate-500 mb-1.5 block">女声音色</label>
+              <label className="text-[10px] text-slate-500 mb-1.5 block">嘉宾音色</label>
               <button
                 onClick={() => setOpenDropdown(openDropdown === "female" ? null : "female")}
                 className="w-full flex items-center justify-between bg-[#1a1a1c] border border-[#2a2a2a] hover:border-white/20 rounded-lg py-2 px-3 text-xs text-white transition-all"
@@ -544,11 +678,11 @@ export default function ZeroStatePage() {
         {/* Primary CTA */}
         <div className="flex flex-col items-center gap-6 pt-3">
           <button
-            onClick={handleGenerate}
-            disabled={scriptLoading || draftLoading}
+            onClick={activeTab === "我有讲稿" ? handleParseScript : handleGenerate}
+            disabled={scriptLoading || draftLoading || scriptParsing}
             className="group relative flex items-center gap-3 px-12 py-4 bg-white hover:bg-white/90 disabled:bg-white/60 text-black rounded-full font-bold text-lg transition-all active:scale-95 shadow-[0_0_40px_rgba(255,255,255,0.1)] disabled:cursor-not-allowed"
           >
-            {scriptLoading || draftLoading ? (
+            {scriptLoading || draftLoading || scriptParsing ? (
               <Loader2 size={20} className="animate-spin" />
             ) : (
               <Sparkles size={20} />
@@ -558,6 +692,10 @@ export default function ZeroStatePage() {
                 ? "正在生成文稿..."
                 : draftLoading
                 ? "正在生成稿件..."
+                : scriptParsing
+                ? "正在解析讲稿..."
+                : activeTab === "我有讲稿"
+                ? "解析讲稿"
                 : activeTab === "探索"
                 ? "生成稿件"
                 : "生成文稿"}

@@ -77,7 +77,7 @@ def _check_balance_warning():
     except Exception:
         pass
 
-# 情绪映射：播刻情绪 / 男声预设 → Fish Speech 自然语言标签
+# 情绪映射：播刻情绪 / 主持预设 → Fish Speech 自然语言标签
 # 支持 5 种核心标签 + 自由形式（不在表中的标签直接透传）
 _EMOTION_MAP = {
     # 播客场景核心 5 种
@@ -90,7 +90,7 @@ _EMOTION_MAP = {
     "平静": None,
     "疑问": None,
     "沉思": "speaking slowly",
-    # 默认男声预设（兼容旧数据）
+    # 默认主持预设（兼容旧数据）
     "标准": None,
     "点评": None,
     "青年": "excited",
@@ -109,7 +109,7 @@ _EMOTION_SPEED = {
     "平静": 1.0,
     "疑问": 1.0,
     "沉思": 0.95,     # 思考感，不降太多
-    # 默认男声预设
+    # 默认主持预设
     "标准": 1.0,
     "点评": 1.05,
     "青年": 1.1,
@@ -278,12 +278,12 @@ def _merge_consecutive_turns(script: list[dict]) -> list[dict]:
         return []
     merged = []
     current = {
-        "speaker": script[0].get("speaker", "男声"),
+        "speaker": script[0].get("speaker", "主持"),
         "text": script[0].get("text", ""),
         "emotion": script[0].get("emotion"),
     }
     for turn in script[1:]:
-        speaker = turn.get("speaker", "男声")
+        speaker = turn.get("speaker", "主持")
         text = turn.get("text", "")
         emotion = turn.get("emotion")
         if speaker == current["speaker"] and emotion == current["emotion"]:
@@ -382,12 +382,12 @@ def generate_podcast(
     生成完整播客音频（含段落合并、呼吸声、环境底噪）。
 
     Args:
-        script: 对话脚本，每项为 {"speaker": "男声"/"女声", "text": "...", "emotion": "平静"/"兴奋"/...}
+        script: 对话脚本，每项为 {"speaker": "主持"/"嘉宾", "text": "...", "emotion": "平静"/"兴奋"/...}
         output_path: 输出路径，默认 benchmark_output/fish_podcast.mp3
-        male_ref: 男声参考音频路径（已弃用，优先使用 male_ref_id）
-        female_ref: 女声参考音频路径（已弃用，优先使用 female_ref_id）
-        male_ref_id: 男声 Fish Audio Voice Model ID（推荐）
-        female_ref_id: 女声 Fish Audio Voice Model ID（推荐）
+        male_ref: 主持参考音频路径（已弃用，优先使用 male_ref_id）
+        female_ref: 嘉宾参考音频路径（已弃用，优先使用 female_ref_id）
+        male_ref_id: 主持 Fish Audio Voice Model ID（推荐）
+        female_ref_id: 嘉宾 Fish Audio Voice Model ID（推荐）
         enable_room_tone: 是否叠加环境底噪（默认 True）
 
     Returns:
@@ -407,7 +407,7 @@ def generate_podcast(
     print(f"[FishTTS] Merged {len(script)} turns into {len(merged_script)} segments")
 
     for i, item in enumerate(merged_script):
-        speaker = item.get("speaker", "男声")
+        speaker = item.get("speaker", "主持")
         text = item.get("text", "")
         emotion = item.get("emotion")
         call_chars += len(text)
@@ -420,8 +420,8 @@ def generate_podcast(
         text = _inject_emotion_tag(text, emotion)
 
         # 4. 选择参考音频/ID 和语速
-        ref = male_ref if speaker == "男声" else female_ref
-        ref_id = male_ref_id if speaker == "男声" else female_ref_id
+        ref = male_ref if speaker == "主持" else female_ref
+        ref_id = male_ref_id if speaker == "主持" else female_ref_id
         speed = _EMOTION_SPEED.get(emotion, 1.0)
 
         # 5. 拆分超长文本（Fish Audio 单条建议不超过 500 字）

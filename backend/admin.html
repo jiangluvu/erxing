@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>播刻 · 后台监控</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0c0c0e; color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px; line-height: 1.5;
+  }
+  .container { max-width: 1320px; margin: 0 auto; padding: 24px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #2a2a2a; }
+  h1 { font-size: 18px; font-weight: 700; color: #fff; }
+  .subtitle { font-size: 12px; color: #64748b; margin-top: 4px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tab { padding: 6px 14px; border-radius: 8px; font-size: 12px; cursor: pointer; background: #161618; border: 1px solid #2a2a2a; color: #94a3b8; transition: all .2s; }
+  .tab.active { background: #ec4899; color: #fff; border-color: #ec4899; }
+  .days { display: flex; gap: 6px; }
+  .day-btn { padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; background: #161618; border: 1px solid #2a2a2a; color: #94a3b8; }
+  .day-btn.active { background: #ec4899; color: #fff; border-color: #ec4899; }
+
+  .grid { display: grid; gap: 16px; }
+  .grid-6 { grid-template-columns: repeat(6, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 1100px) { .grid-6 { grid-template-columns: repeat(3, 1fr); } .grid-4 { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 700px) { .grid-6, .grid-4, .grid-3 { grid-template-columns: 1fr; } .grid-2 { grid-template-columns: 1fr; } }
+
+  .card { background: #161618; border: 1px solid #2a2a2a; border-radius: 16px; padding: 16px; }
+  .card-title { font-size: 11px; color: #64748b; margin-bottom: 6px; }
+  .card-value { font-size: 22px; font-weight: 700; color: #fff; }
+  .card-sub { font-size: 10px; color: #475569; margin-top: 4px; }
+
+  .section-title { font-size: 13px; font-weight: 700; color: #fff; margin: 28px 0 12px; display: flex; align-items: center; gap: 8px; }
+  .section-title::before { content: ''; width: 3px; height: 14px; border-radius: 2px; background: #ec4899; }
+  .section-title.green::before { background: #52dea2; }
+  .section-title.blue::before { background: #5E9EFF; }
+  .section-title.orange::before { background: #FF9F5E; }
+  .section-title.purple::before { background: #764BA2; }
+  .section-title.cyan::before { background: #22d3ee; }
+  .section-title.amber::before { background: #f59e0b; }
+
+  .chart { width: 100%; height: 260px; }
+  .chart-sm { height: 200px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #2a2a2a; }
+  th { color: #64748b; font-weight: 500; }
+  td { color: #cbd5e1; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 500; }
+  .badge-running { background: rgba(82,222,162,.1); color: #52dea2; }
+  .badge-paused { background: rgba(255,159,94,.1); color: #FF9F5E; }
+  .badge-completed { background: rgba(94,158,255,.1); color: #5E9EFF; }
+
+  .loading { display: flex; align-items: center; justify-content: center; padding: 40px; color: #64748b; font-size: 12px; }
+  .empty { text-align: center; padding: 32px; color: #475569; font-size: 12px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <h1>播刻 · 后台监控中心</h1>
+      <div class="subtitle">输入层 · 生成质量 · TTS · 播放行为 · 实验平台</div>
+    </div>
+    <div class="days" id="daySelector">
+      <button class="day-btn active" data-days="7">近7天</button>
+      <button class="day-btn" data-days="14">近14天</button>
+      <button class="day-btn" data-days="30">近30天</button>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="dashboard">数据监控</div>
+    <div class="tab" data-tab="experiments">实验平台</div>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="dashboard">
+    <!-- Input Layer -->
+    <div class="section-title">输入层概览</div>
+    <div class="grid grid-6" id="inputCards"></div>
+    <div class="grid grid-2" style="margin-top:16px">
+      <div class="card"><div class="chart-sm" id="chartSource"></div></div>
+      <div class="card"><div class="chart-sm" id="chartPlatform"></div></div>
+    </div>
+
+    <!-- Generation Quality -->
+    <div class="section-title green">生成质量趋势</div>
+    <div class="grid grid-6" id="genCards"></div>
+    <div class="grid grid-2" style="margin-top:16px">
+      <div class="card"><div class="chart" id="chartTrend"></div></div>
+      <div class="card"><div class="chart" id="chartGenDist"></div></div>
+    </div>
+    <div class="grid grid-2" style="margin-top:16px">
+      <div class="card"><div class="chart" id="chartModelDist"></div></div>
+      <div class="card"><div class="chart" id="chartPromptModeDist"></div></div>
+    </div>
+
+    <!-- Factual Consistency -->
+    <div class="section-title cyan">事实一致性</div>
+    <div class="grid grid-6" id="factCards"></div>
+    <div class="card" style="margin-top:16px"><div class="chart-sm" id="chartFactTrend"></div></div>
+
+    <!-- Text Stats -->
+    <div class="section-title purple">文本自然度指标</div>
+    <div class="grid grid-6" id="textStatCards"></div>
+    <div class="card" style="margin-top:16px"><div class="chart" id="chartTextStats"></div></div>
+
+    <!-- Second-tier Metrics -->
+    <div class="section-title cyan">第二档评估指标</div>
+    <div class="grid grid-6" id="tier2Cards"></div>
+    <div class="grid grid-2" style="margin-top:16px">
+      <div class="card"><div class="chart-sm" id="chartTier2"></div></div>
+      <div class="card"><div class="chart-sm" id="chartOC"></div></div>
+    </div>
+
+    <!-- TTS -->
+    <div class="section-title blue">TTS 质量</div>
+    <div class="grid grid-6" id="ttsCards"></div>
+    <div class="grid grid-2" style="margin-top:16px">
+      <div class="card"><div class="chart" id="chartEmotion"></div></div>
+      <div class="card"><div class="chart" id="chartVoiceDist"></div></div>
+    </div>
+
+    <!-- Playback -->
+    <div class="section-title orange">播放热力图</div>
+    <div class="grid grid-6" id="playbackCards"></div>
+    <div class="card" style="margin-top:16px"><div class="chart" id="chartExit"></div></div>
+
+    <!-- User Actions -->
+    <div class="section-title amber">用户行为指标</div>
+    <div class="grid grid-4" id="userActionCards"></div>
+  </div>
+
+  <!-- Experiments -->
+  <div id="experiments" class="hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div class="section-title" style="margin:0">实验列表</div>
+      <button id="btnRefreshExp" class="day-btn">刷新</button>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead><tr><th>名称</th><th>状态</th><th>变体</th><th>流量</th><th>样本量</th><th>操作</th></tr></thead>
+        <tbody id="expList"></tbody>
+      </table>
+    </div>
+    <div id="expDetail" style="margin-top:16px"></div>
+  </div>
+</div>
+
+<script>
+const API_BASE = '/api';
+let currentDays = 7;
+let dashboardData = null;
+let expData = [];
+let selectedExp = null;
+const chartInstances = {};
+
+function initChart(id, option) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  if (chartInstances[id]) chartInstances[id].dispose();
+  const c = echarts.init(el, 'dark', { renderer: 'canvas', backgroundColor: 'transparent' });
+  c.setOption(option);
+  chartInstances[id] = c;
+  return c;
+}
+function commonTooltip() { return { backgroundColor: '#1a1a1c', borderColor: '#2a2a2a', textStyle: { color: '#e2e8f0', fontSize: 12 } }; }
+function commonGrid() { return { left: 50, right: 20, top: 30, bottom: 30, containLabel: true }; }
+async function fetchJSON(path) {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+function fmtPct(v) { return `${Math.round((v||0)*100)}%`; }
+function fmtNum(v, d=0) { return d ? (v||0).toFixed(d) : Math.round(v||0); }
+function Card(label, value, sub='') { return `<div class="card"><div class="card-title">${label}</div><div class="card-value">${value}</div>${sub?`<div class="card-sub">${sub}</div>`:''}</div>`; }
+
+function renderInputLayer(input) {
+  const sourceData = Object.entries(input.source_distribution||{}).map(([k,v])=>({name:k==='url'?'URL':k==='text'?'文本':k==='upload'?'上传':k, value:v}));
+  const platData = Object.entries(input.platform_distribution||{}).map(([k,v])=>({name:k, value:v}));
+  document.getElementById('inputCards').innerHTML = `
+    ${Card('总文章数', fmtNum(input.total_articles))}
+    ${Card('平均长度', fmtNum(input.avg_article_length)+' 字')}
+    ${Card('解析失败率', fmtPct(input.parse_failure_rate))}
+    ${Card('单段命中率', fmtPct(input.single_shot_rate))}
+    ${Card('Fallback率', fmtPct(input.fallback_trigger_rate))}
+    ${Card('平均Chunk长', fmtNum(input.avg_chunk_length)+' 字')}
+    ${Card('原生结构占比', fmtPct(input.has_native_headers_rate))}
+    ${Card('平均压缩比', fmtNum(input.avg_compression_ratio, 2))}
+  `;
+  initChart('chartSource', {
+    title:{text:'来源分布', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'item', ...commonTooltip()},
+    series:[{type:'pie', radius:['40%','70%'], center:['50%','55%'], data:sourceData, label:{color:'#cbd5e1', fontSize:11}, itemStyle:{borderRadius:4, borderColor:'#0c0c0e', borderWidth:2}}],
+    color:['#ec4899','#52dea2','#5E9EFF','#FF9F5E','#FFD700','#764BA2']
+  });
+  initChart('chartPlatform', {
+    title:{text:'平台分布', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', ...commonTooltip()},
+    grid:commonGrid(),
+    xAxis:{type:'category', data:platData.map(d=>d.name), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+    yAxis:{type:'value', axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+    series:[{type:'bar', data:platData.map(d=>d.value), itemStyle:{borderRadius:[4,4,0,0], color:'#5E9EFF'}}]
+  });
+}
+
+function renderGenQuality(gen) {
+  document.getElementById('genCards').innerHTML = `
+    ${Card('关键词覆盖', fmtPct(gen.avg_keyword_coverage))}
+    ${Card('忠实度', fmtPct(gen.avg_faithfulness))}
+    ${Card('角色区分度', fmtPct(gen.avg_role_distinction))}
+    ${Card('格式失败率', fmtPct(gen.format_failure_rate))}
+    ${Card('扩写比例', fmtNum(gen.avg_expansion_ratio, 2))}
+    ${Card('LLM耗时', fmtNum(gen.avg_llm_time_ms)+'ms')}
+  `;
+  const trend = (gen.daily_trend||[]).map(d=>({
+    date:d.date?.slice(5)||d.date,
+    coverage:Math.round((d.coverage||0)*100),
+    faithfulness:Math.round((d.faithfulness||0)*100),
+    turns:d.turns||0,
+    distinct_1:Math.round((d.distinct_1||0)*100),
+    distinct_2:Math.round((d.distinct_2||0)*100),
+    avg_llm_time:d.avg_llm_time_ms||0
+  }));
+  initChart('chartTrend', {
+    title:{text:'每日趋势', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', ...commonTooltip()},
+    legend:{data:['关键词覆盖%','忠实度%'], textStyle:{color:'#94a3b8', fontSize:11}, bottom:0},
+    grid:{...commonGrid(), bottom:40},
+    xAxis:{type:'category', data:trend.map(d=>d.date), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+    yAxis:{type:'value', axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+    series:[
+      {name:'关键词覆盖%', type:'line', smooth:true, data:trend.map(d=>d.coverage), lineStyle:{color:'#ec4899', width:2}, showSymbol:false},
+      {name:'忠实度%', type:'line', smooth:true, data:trend.map(d=>d.faithfulness), lineStyle:{color:'#52dea2', width:2}, showSymbol:false}
+    ]
+  });
+
+  const modelData = Object.entries(gen.model_distribution||{}).map(([k,v])=>({name:k||'unknown', value:v}));
+  initChart('chartModelDist', {
+    title:{text:'模型分布', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', ...commonTooltip()},
+    grid:commonGrid(),
+    xAxis:{type:'category', data:modelData.map(d=>d.name), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+    yAxis:{type:'value', axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+    series:[{type:'bar', data:modelData.map(d=>d.value), itemStyle:{borderRadius:[4,4,0,0], color:'#764BA2'}}]
+  });
+
+  const pmData = Object.entries(gen.prompt_mode_distribution||{}).map(([k,v])=>({name:k||'unknown', value:v}));
+  initChart('chartPromptModeDist', {
+    title:{text:'Prompt 模式分布', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', ...commonTooltip()},
+    grid:commonGrid(),
+    xAxis:{type:'category', data:pmData.map(d=>d.name), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+    yAxis:{type:'value', axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+    series:[{type:'bar', data:pmData.map(d=>d.value), itemStyle:{borderRadius:[4,4,0,0], color:'#FF9F5E'}}]
+  });
+
+  const genScoreData = [
+    {name:'内容准确', value:Math.round((gen.avg_content_accuracy_score||0)*20)},
+    {name:'口语化', value:Math.round((gen.avg_colloquial_score||0)*20)},
+    {name:'角色差异', value:Math.round((gen.avg_role_difference_score||0)*20)},
+    {name:'场景适配', value:Math.round((gen.avg_scene_fit_score||0)*20)},
+    {name:'Distinct-1', value:Math.round((gen.avg_distinct_1||0)*100)},
+    {name:'Distinct-2', value:Math.round((gen.avg_distinct_2||0)*100)},
+  ];
+  initChart('chartGenDist', {
+    title:{text:'生成评分雷达', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', ...commonTooltip()},
+    radar:{
+      indicator:genScoreData.map(d=>({name:d.name, max:100})),
+      axisName:{color:'#94a3b8', fontSize:11},
+      splitArea:{areaStyle:{color:['rgba(255,255,255,.02)','rgba(255,255,255,.05)']}},
+      axisLine:{lineStyle:{color:'#2a2a2a'}}, splitLine:{lineStyle:{color:'#2a2a2a'}}
+    },
+    series:[{type:'radar', data:[{value:genScoreData.map(d=>d.value), name:'得分'}], areaStyle:{color:'rgba(236,72,153,.2)'}, lineStyle:{color:'#ec4899', width:2}}]
+  });
+}
+
+function renderFactConsistency(gen) {
+  document.getElementById('factCards').innerHTML = `
+    ${Card('RAGAs Faithfulness', fmtPct(gen.avg_faithfulness))}
+    ${Card('Q2 事实一致性', gen.avg_q2_score ? fmtPct(gen.avg_q2_score) : '—')}
+    ${Card('关键词覆盖率', fmtPct(gen.avg_keyword_coverage))}
+    ${Card('角色区分度', fmtPct(gen.avg_role_distinction))}
+    ${Card('格式失败率', fmtPct(gen.format_failure_rate))}
+    ${Card('角色违反率', fmtPct(gen.avg_role_violation_rate))}
+  `;
+  const trend = (gen.daily_trend||[]).map(d=>({
+    date:d.date?.slice(5)||d.date,
+    faithfulness:Math.round((d.faithfulness||0)*100),
+    q2:Math.round((d.q2_score||0)*100),
+    coverage:Math.round((d.coverage||0)*100),
+  }));
+  initChart('chartFactTrend', {
+    title:{text:'事实一致性日趋势', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', ...commonTooltip()},
+    legend:{data:['Faithfulness','Q2 Score','关键词覆盖'], textStyle:{color:'#94a3b8', fontSize:11}, bottom:0},
+    grid:{...commonGrid(), bottom:40},
+    xAxis:{type:'category', data:trend.map(d=>d.date), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+    yAxis:{type:'value', axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+    series:[
+      {name:'Faithfulness', type:'line', smooth:true, data:trend.map(d=>d.faithfulness), lineStyle:{color:'#22d3ee', width:2}, showSymbol:false},
+      {name:'Q2 Score', type:'line', smooth:true, data:trend.map(d=>d.q2), lineStyle:{color:'#ec4899', width:2}, showSymbol:false},
+      {name:'关键词覆盖', type:'line', smooth:true, data:trend.map(d=>d.coverage), lineStyle:{color:'#52dea2', width:2}, showSymbol:false}
+    ]
+  });
+}
+
+function renderTextStats(gen) {
+  document.getElementById('textStatCards').innerHTML = `
+    ${Card('平均句长', fmtNum(gen.avg_turn_length, 1)+' 字')}
+    ${Card('问句比例', fmtPct(gen.avg_question_ratio))}
+    ${Card('感叹句比例', fmtPct(gen.avg_exclamation_ratio))}
+    ${Card('填充词密度', fmtPct(gen.avg_filler_density))}
+    ${Card('停顿密度', fmtPct(gen.avg_pause_density))}
+    ${Card('情绪标签率', fmtPct(gen.avg_emotion_tag_rate))}
+    ${Card('角色违反率', fmtPct(gen.avg_role_violation_rate))}
+    ${Card('扩写比例', fmtNum(gen.avg_expansion_ratio, 2))}
+  `;
+  const textStatData = [
+    {name:'平均句长', value:Math.min(100, (gen.avg_turn_length||0)/1.5), raw:(gen.avg_turn_length||0).toFixed(1)+'字'},
+    {name:'问句比例', value:Math.round((gen.avg_question_ratio||0)*100)},
+    {name:'感叹句比例', value:Math.round((gen.avg_exclamation_ratio||0)*100)},
+    {name:'填充词密度', value:Math.round((gen.avg_filler_density||0)*100)},
+    {name:'停顿密度', value:Math.round((gen.avg_pause_density||0)*100)},
+    {name:'情绪标签率', value:Math.round((gen.avg_emotion_tag_rate||0)*100)},
+    {name:'角色违反率', value:Math.round((gen.avg_role_violation_rate||0)*100)},
+  ];
+  initChart('chartTextStats', {
+    title:{text:'文本自然度指标', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', formatter:function(p){return p.map(i=>'• '+i.name+': '+(textStatData[i.dataIndex]?.raw||i.value)).join('\n');}, ...commonTooltip()},
+    grid:commonGrid(),
+    xAxis:{type:'category', data:textStatData.map(d=>d.name), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+    yAxis:{type:'value', max:100, axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+    series:[{type:'bar', data:textStatData.map(d=>d.value), itemStyle:{borderRadius:[4,4,0,0], color:function(p){return p.dataIndex<3?'#22d3ee':'#764BA2';}}}]
+  });
+}
+
+function renderTier2(gen) {
+  const ocData = [
+    {name:'嘉宾开场', value:Math.round((gen.opening_guest_first_rate||0)*100)},
+    {name:'主持结尾', value:Math.round((gen.closing_host_last_rate||0)*100)},
+    {name:'首尾综合', value:Math.round((gen.avg_opening_closing_score||0)*100)},
+  ];
+  document.getElementById('tier2Cards').innerHTML = `
+    ${Card('数字幻觉率', fmtPct(gen.avg_numeric_hallucination_rate))}
+    ${Card('实体幻觉率', fmtPct(gen.avg_entity_hallucination_rate))}
+    ${Card('关键词遗漏率', fmtPct(gen.avg_keyword_omission_rate))}
+    ${Card('连贯性分数', (gen.avg_coherence_score||0).toFixed(3))}
+    ${Card('连贯性标准差', (gen.avg_coherence_std||0).toFixed(3))}
+    ${Card('首尾质量', fmtPct(gen.avg_opening_closing_score))}
+    ${Card('嘉宾开场率', fmtPct(gen.opening_guest_first_rate))}
+    ${Card('主持结尾率', fmtPct(gen.closing_host_last_rate))}
+    ${Card('Chunk衔接', fmtPct(gen.avg_chunk_transition_score))}
+  `;
+  const tier2ChartData = [
+    {name:'数字幻觉率', value:Math.round((gen.avg_numeric_hallucination_rate||0)*100)},
+    {name:'实体幻觉率', value:Math.round((gen.avg_entity_hallucination_rate||0)*100)},
+    {name:'关键词遗漏率', value:Math.round((gen.avg_keyword_omission_rate||0)*100)},
+    {name:'连贯性分数', value:Math.round((gen.avg_coherence_score||0)*100)},
+    {name:'首尾质量', value:Math.round((gen.avg_opening_closing_score||0)*100)},
+    {name:'Chunk衔接', value:Math.round((gen.avg_chunk_transition_score||0)*100)},
+  ];
+  initChart('chartTier2', {
+    title:{text:'第二档指标概览', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', ...commonTooltip()},
+    grid:commonGrid(),
+    xAxis:{type:'category', data:tier2ChartData.map(d=>d.name), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+    yAxis:{type:'value', max:100, axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+    series:[{type:'bar', data:tier2ChartData.map(d=>d.value), itemStyle:{borderRadius:[4,4,0,0], color:function(p){return p.dataIndex<3?'#FF6B6B':'#22d3ee';}}}]
+  });
+  initChart('chartOC', {
+    title:{text:'首尾质量细则', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', ...commonTooltip()},
+    grid:commonGrid(),
+    xAxis:{type:'category', data:ocData.map(d=>d.name), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+    yAxis:{type:'value', max:100, axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+    series:[{type:'bar', data:ocData.map(d=>d.value), itemStyle:{borderRadius:[4,4,0,0], color:'#5E9EFF'}}]
+  });
+}
+
+function renderTTS(tts) {
+  const emotionData = Object.entries(tts.emotion_distribution||{}).map(([k,v])=>({name:k, value:v}));
+  const voiceData = Object.entries(tts.voice_distribution||{}).map(([k,v])=>({name:k?.slice(0,8)+'...'||'default', value:v}));
+  document.getElementById('ttsCards').innerHTML = `
+    ${Card('TTS 会话数', fmtNum(tts.total_sessions))}
+    ${Card('失败率', fmtPct(tts.failure_rate))}
+    ${Card('平均耗时', fmtNum(tts.avg_tts_time_ms)+'ms')}
+    ${Card('平均音频时长', fmtNum(tts.avg_audio_duration_s, 1)+'s')}
+    ${Card('HQ 占比', fmtPct(tts.high_quality_rate))}
+    ${Card('BGM 占比', fmtPct(tts.bg_music_rate))}
+  `;
+  initChart('chartEmotion', {
+    title:{text:'情绪分布', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', ...commonTooltip()},
+    grid:commonGrid(),
+    xAxis:{type:'category', data:emotionData.map(d=>d.name), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+    yAxis:{type:'value', axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+    series:[{type:'bar', data:emotionData.map(d=>d.value), itemStyle:{borderRadius:[4,4,0,0], color:'#ec4899'}}]
+  });
+  initChart('chartVoiceDist', {
+    title:{text:'音色使用分布', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'item', ...commonTooltip()},
+    series:[{type:'pie', radius:['40%','70%'], center:['50%','55%'], data:voiceData, label:{color:'#cbd5e1', fontSize:11}, itemStyle:{borderRadius:4, borderColor:'#0c0c0e', borderWidth:2}}],
+    color:['#ec4899','#52dea2','#5E9EFF','#FF9F5E','#FFD700','#764BA2']
+  });
+}
+
+function renderPlayback(pb) {
+  const exits = (pb.top_exit_turns||[]).map(t=>({name:`Turn ${t.turn_index+1}`, exits:t.exit_count, avg:t.avg_listen_duration_s}));
+  document.getElementById('playbackCards').innerHTML = `
+    ${Card('平均完播率', fmtPct(pb.avg_completion_rate))}
+    ${Card('平均收听时长', fmtNum(pb.avg_listen_duration_s, 1)+'s')}
+    ${Card('最高退出 Turn', '#'+((pb.top_exit_turns||[])[0]?.turn_index+1||'—'))}
+    ${Card('收听会话数', fmtNum(pb.total_sessions))}
+    ${Card('退出次数最多', fmtNum(exits[0]?.exits||0)+' 次')}
+    ${Card('平均停留', fmtNum(exits[0]?.avg||0, 1)+'s')}
+  `;
+  initChart('chartExit', {
+    title:{text:'Top 退出 Turn', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+    tooltip:{trigger:'axis', ...commonTooltip()},
+    legend:{data:['退出次数','平均停留(s)'], textStyle:{color:'#94a3b8', fontSize:11}, bottom:0},
+    grid:{...commonGrid(), bottom:40},
+    xAxis:{type:'value', axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+    yAxis:{type:'category', data:exits.map(d=>d.name), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+    series:[
+      {name:'退出次数', type:'bar', data:exits.map(d=>d.exits), itemStyle:{borderRadius:[0,4,4,0], color:'#ec4899'}},
+      {name:'平均停留(s)', type:'bar', data:exits.map(d=>d.avg), itemStyle:{borderRadius:[0,4,4,0], color:'#52dea2'}}
+    ]
+  });
+}
+
+function renderUserActions(ua) {
+  const total = ua.total || 0;
+  const replay = ua.replay || 0;
+  const regenerate = ua.regenerate || 0;
+  const edit = ua.edit_generate || 0;
+  document.getElementById('userActionCards').innerHTML = `
+    ${Card('总用户行为数', fmtNum(total))}
+    ${Card('二次播放', fmtNum(replay), 'replay 事件')}
+    ${Card('重新生成', fmtNum(regenerate), 'regenerate 事件')}
+    ${Card('编辑后生成', fmtNum(edit), 'edit_generate 事件')}
+  `;
+}
+
+async function loadDashboard() {
+  try {
+    dashboardData = await fetchJSON(`/metrics/dashboard?days=${currentDays}`);
+    renderInputLayer(dashboardData.input_layer||{});
+    renderGenQuality(dashboardData.generation_quality||{});
+    renderFactConsistency(dashboardData.generation_quality||{});
+    renderTextStats(dashboardData.generation_quality||{});
+    renderTier2(dashboardData.generation_quality||{});
+    renderTTS(dashboardData.tts||{});
+    renderPlayback(dashboardData.playback||{});
+    renderUserActions(dashboardData.user_actions||{});
+  } catch (e) { console.error(e); }
+}
+
+async function loadExperiments() {
+  try {
+    const res = await fetchJSON('/experiments');
+    expData = res.experiments || [];
+    const tbody = document.getElementById('expList');
+    if (!expData.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无实验</td></tr>'; return; }
+    tbody.innerHTML = expData.map(exp => {
+      const badgeClass = exp.status==='running'?'badge-running':exp.status==='paused'?'badge-paused':'badge-completed';
+      const statusText = exp.status==='running'?'运行中':exp.status==='paused'?'已暂停':'已完成';
+      const totalSamples = (exp.variants||[]).reduce((sum,v)=>sum+(v.sample_size||0),0);
+      return `<tr>
+        <td>${exp.name}</td>
+        <td><span class="badge ${badgeClass}">${statusText}</span></td>
+        <td>${(exp.variants||[]).length}</td>
+        <td>${Math.round((exp.traffic_ratio||0)*100)}%</td>
+        <td>${totalSamples}</td>
+        <td><button class="day-btn" onclick="selectExp('${exp.id}')">查看</button></td>
+      </tr>`;
+    }).join('');
+  } catch (e) { console.error(e); }
+}
+
+window.selectExp = async function(id) {
+  selectedExp = expData.find(e=>e.id===id);
+  if (!selectedExp) return;
+  const detail = document.getElementById('expDetail');
+  detail.innerHTML = '<div class="loading">加载中...</div>';
+  try {
+    const res = await fetchJSON(`/experiments/${encodeURIComponent(id)}/results`);
+    const stats = res.variant_stats || {};
+    const chartData = Object.entries(stats).map(([name, s])=>({
+      name, sampleSize:s.sample_size||0,
+      completionRate:Math.round((s.avg_completion_rate||0)*100),
+      faithfulness:Math.round((s.avg_faithfulness||0)*100),
+      regenerationRate:Math.round((s.avg_regeneration_rate||0)*100)
+    }));
+    detail.innerHTML = `
+      <div class="section-title" style="margin-top:0">${selectedExp.name} · 结果对比</div>
+      <div class="card"><div class="chart" id="chartExp"></div></div>
+      <div class="grid grid-2" style="margin-top:16px">
+        ${Object.entries(stats).map(([name, s])=>`
+          <div class="card">
+            <div class="card-title">${name}</div>
+            <div class="card-value" style="font-size:18px">样本 ${s.sample_size||0}</div>
+            <div class="card-sub">完播率 ${Math.round((s.avg_completion_rate||0)*100)}% · 忠实度 ${Math.round((s.avg_faithfulness||0)*100)}% · 重生成率 ${Math.round((s.avg_regeneration_rate||0)*100)}%</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    setTimeout(()=>{
+      initChart('chartExp', {
+        title:{text:'指标对比', left:'center', textStyle:{fontSize:12, color:'#94a3b8'}},
+        tooltip:{trigger:'axis', ...commonTooltip()},
+        legend:{data:['完播率%','忠实度%'], textStyle:{color:'#94a3b8', fontSize:11}, bottom:0},
+        grid:{...commonGrid(), bottom:40},
+        xAxis:{type:'category', data:chartData.map(d=>d.name), axisLabel:{color:'#64748b', fontSize:11}, axisLine:{lineStyle:{color:'#2a2a2a'}}},
+        yAxis:{type:'value', axisLabel:{color:'#64748b'}, splitLine:{lineStyle:{color:'#2a2a2a'}}},
+        series:[
+          {name:'完播率%', type:'bar', data:chartData.map(d=>d.completionRate), itemStyle:{borderRadius:[4,4,0,0], color:'#ec4899'}},
+          {name:'忠实度%', type:'bar', data:chartData.map(d=>d.faithfulness), itemStyle:{borderRadius:[4,4,0,0], color:'#52dea2'}}
+        ]
+      });
+    }, 0);
+  } catch (e) { detail.innerHTML = '<div class="empty">加载失败</div>'; }
+};
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    const target = tab.dataset.tab;
+    document.getElementById('dashboard').classList.toggle('hidden', target!=='dashboard');
+    document.getElementById('experiments').classList.toggle('hidden', target!=='experiments');
+    if (target==='experiments') loadExperiments();
+  });
+});
+
+// Day switching
+document.getElementById('daySelector').addEventListener('click', e=>{
+  if (!e.target.classList.contains('day-btn')) return;
+  document.querySelectorAll('#daySelector .day-btn').forEach(b=>b.classList.remove('active'));
+  e.target.classList.add('active');
+  currentDays = parseInt(e.target.dataset.days);
+  loadDashboard();
+});
+
+document.getElementById('btnRefreshExp').addEventListener('click', loadExperiments);
+
+window.addEventListener('resize', ()=>{
+  Object.values(chartInstances).forEach(c=>c&&c.resize());
+});
+
+loadDashboard();
+</script>
+</body>
+</html>

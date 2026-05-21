@@ -4,8 +4,14 @@ services:
     runtime: python
     repo: https://github.com/jxy700516981216/erxing
     plan: free
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && gunicorn app:app --workers 2 --timeout 120 --bind 0.0.0.0:$PORT
+    buildCommand: |
+      # Install Node.js for frontend build
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
+      # Install Python dependencies
+      pip install -r backend/requirements.txt
+      # Build frontend
+      cd frontend && npm install && npm run build
+    startCommand: cd backend && gunicorn app:app --workers 2 --timeout 300 --bind 0.0.0.0:$PORT
     envVars:
       - key: ZHI_API_KEY
         sync: false

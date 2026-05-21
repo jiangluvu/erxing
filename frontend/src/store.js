@@ -38,9 +38,9 @@ export const useAppStore = create((set, get) => ({
   setTimings: (t) => set({ timings: t }),
 
   // User preferences
-  selectedModel: "kimi",
+  selectedModel: "deepseek",
   setSelectedModel: (m) => set({ selectedModel: m }),
-  selectedDuration: "standard",
+  selectedDuration: "free",
   setSelectedDuration: (d) => set({ selectedDuration: d }),
   highQuality: true,
   setHighQuality: (v) => set({ highQuality: v }),

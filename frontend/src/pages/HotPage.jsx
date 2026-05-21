@@ -121,10 +121,10 @@ export default function HotPage() {
               className="flex items-start gap-4 bg-[#161618] border border-[#2a2a2a] rounded-2xl p-4 hover:border-white/10 transition-all cursor-pointer"
               onClick={() => {
                 const previewScript = [
-                  { speaker: "女声", text: `今天咱们来聊聊《${item.title}》。` },
-                  { speaker: "男声", text: item.summary || item.desc },
+                  { speaker: "嘉宾", text: `今天咱们来聊聊《${item.title}》。` },
+                  { speaker: "主持", text: item.summary || item.desc },
                   ...(item.chapters || []).map((ch, i) => ({
-                    speaker: i % 2 === 0 ? "女声" : "男声",
+                    speaker: i % 2 === 0 ? "嘉宾" : "主持",
                     text: `${ch.t}，${ch.d}`,
                   })),
                 ];

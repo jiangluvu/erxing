@@ -70,7 +70,7 @@ export default function GenerationPage() {
                 <User size={32} />
               </div>
             </div>
-            <div className="text-sm font-semibold text-white">男声</div>
+            <div className="text-sm font-semibold text-white">主持</div>
           </div>
           <div className="text-center">
             <div className="relative w-20 h-20 mx-auto mb-3">
@@ -78,7 +78,7 @@ export default function GenerationPage() {
                 <User size={32} />
               </div>
             </div>
-            <div className="text-sm font-semibold text-white">女声</div>
+            <div className="text-sm font-semibold text-white">嘉宾</div>
           </div>
         </div>
 

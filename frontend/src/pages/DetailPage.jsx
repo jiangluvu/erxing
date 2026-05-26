@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAppStore } from "../store";
-import { addNote, downloadPodcast } from "../api";
+import { addNote, downloadPodcast, getPodcastDetail } from "../api";
 import {
   ArrowLeft,
   Play,
@@ -34,12 +34,29 @@ const chapters = [
   },
 ];
 
+function formatTime(s) {
+  if (!s || isNaN(s)) return "00:00";
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
 export default function DetailPage() {
   const setPage = useAppStore((s) => s.setPage);
   const currentPodcast = useAppStore((s) => s.currentPodcast);
   const scriptData = useAppStore((s) => s.scriptData);
   const sessionId = useAppStore((s) => s.sessionId);
   const [toast, setToast] = useState("");
+  const [chapters, setChapters] = useState([]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    getPodcastDetail(sessionId)
+      .then((data) => {
+        if (data.chapters) setChapters(data.chapters);
+      })
+      .catch(() => {});
+  }, [sessionId]);
 
   const title = currentPodcast?.title || "播客详情";
   const platform = currentPodcast?.platform || "网页";
@@ -174,34 +191,47 @@ export default function DetailPage() {
       <div className="mb-8">
         <h2 className="text-sm font-semibold text-white mb-3">章节大纲</h2>
         <div className="space-y-3">
-          {chapters.map((ch, i) => (
-            <div
-              key={ch.num}
-              className="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5 hover:border-white/10 transition-all cursor-pointer"
-              onClick={() => setPage("player")}
-            >
-              <div className="flex items-start gap-4">
+          {chapters.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-sm font-semibold text-white mb-3">章节大纲</h2>
+          <div className="space-y-3">
+            {chapters.map((ch, i) => {
+              const num = String(i + 1).padStart(2, "0");
+              const timeStr = ch.start_time !== undefined
+                ? `${formatTime(ch.start_time)} - ${formatTime(ch.end_time)}`
+                : "";
+              return (
                 <div
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-                    i === 0
-                      ? "bg-brand-pink/10 text-brand-pink"
-                      : "bg-white/5 text-slate-500"
-                  }`}
+                  key={ch.id || i}
+                  className="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5 hover:border-white/10 transition-all cursor-pointer"
+                  onClick={() => setPage("player")}
                 >
-                  {ch.num}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-semibold text-white">
-                      {ch.title}
-                    </span>
-                    <span className="text-xs text-slate-500">{ch.time}</span>
+                  <div className="flex items-start gap-4">
+                    <div
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                        i === 0
+                          ? "bg-brand-pink/10 text-brand-pink"
+                          : "bg-white/5 text-slate-500"
+                      }`}
+                    >
+                      {num}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-semibold text-white">
+                          {ch.t || ch.title || `第${ch.id || i + 1}部分`}
+                        </span>
+                        {timeStr && <span className="text-xs text-slate-500">{timeStr}</span>}
+                      </div>
+                      <p className="text-xs text-slate-500">{ch.d || ch.desc || ch.summary || ""}</p>
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-500">{ch.desc}</p>
                 </div>
-              </div>
-            </div>
-          ))}
+              );
+            })}
+          </div>
+        </div>
+      )}
         </div>
       </div>
 

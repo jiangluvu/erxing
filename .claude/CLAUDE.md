@@ -14,14 +14,17 @@
 - 颜色、间距必须使用设计令牌中的值，不可随意写死
 
 ## 技术栈
-- 前端：单页 HTML（`frontend/index.html`），原生 CSS + 原生 JS
+- 前端：React 19 + Vite SPA（`frontend/src/`），JSX 组件 + Tailwind CSS 3
+  - 状态管理：Zustand（`frontend/src/store.js`）
+  - 图标：lucide-react
+  - 图表：recharts
+  - 构建：`npm run build` / `npm run dev`
 - 后端：Python Flask（`backend/app.py`）
-- 矢量/符号图标使用 Unicode emoji（网页组件中可用）
 - 存储：后端 JSONL 文件 + localStorage
 
 ## 工作流
 1. 读取 `frontend/design-ref/` 了解当前设计
-2. 在 `frontend/index.html` 中对照实现（单文件，含 CSS + HTML + JS）
+2. 前端组件在 `frontend/src/` 中修改（JSX 组件 + Tailwind CSS）
 3. 后端新增 API 写在 `backend/app.py`
 4. 如果发现设计有矛盾或无法实现，回上游讨论，不在下游私自改动设计
 5. 所有改动先在本地测试，用户同意后再部署

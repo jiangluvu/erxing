@@ -138,4 +138,14 @@ export const useAppStore = create((set, get) => ({
   toast: null,
   showToast: (message, type = "info") => set({ toast: { message, type } }),
   clearToast: () => set({ toast: null }),
+
+  // Selected intro/outro presets for current generation
+  selectedIntroPresetId: null,
+  setSelectedIntroPresetId: (id) => set({ selectedIntroPresetId: id }),
+  selectedOutroPresetId: null,
+  setSelectedOutroPresetId: (id) => set({ selectedOutroPresetId: id }),
+
+  // Chapter data for timeline player
+  chapters: [],
+  setChapters: (ch) => set({ chapters: ch }),
 }));

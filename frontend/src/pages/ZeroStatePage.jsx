@@ -20,11 +20,11 @@ import { useAppStore } from "../store";
 import { getDraft, parseArticle, generateScript, uploadFile, parseScript } from "../api";
 
 const modelLabelMap = {
-  "deepseek-v4": "DeepSeek V4", "deepseek-v4-flash": "DeepSeek V4 Flash",
+  "deepseek-v4-pro": "DeepSeek V4", "deepseek-v4-flash": "DeepSeek V4 Flash",
   "gpt-4o": "GPT-4o", "gpt-4o-mini": "GPT-4o Mini",
   "claude-haiku-4-5": "Claude Haiku", "claude-sonnet-4-6": "Claude Sonnet",
   "claude-opus-4-7": "Claude Opus",
-  "qwen3-72b": "Qwen3 72B", "qwen3-32b": "Qwen3 32B",
+  "qwen3-max": "Qwen3 Max", "qwen3-32b": "Qwen3 32B",
   "gemini-2.5-pro": "Gemini 2.5 Pro",
 };
 const durationLabelMap = {
@@ -87,6 +87,14 @@ export default function ZeroStatePage() {
   const showToast = useAppStore((s) => s.showToast);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const selectedDuration = useAppStore((s) => s.selectedDuration);
+  const selectedIntroPresetId = useAppStore((s) => s.selectedIntroPresetId);
+  const setSelectedIntroPresetId = useAppStore((s) => s.setSelectedIntroPresetId);
+  const selectedOutroPresetId = useAppStore((s) => s.selectedOutroPresetId);
+  const setSelectedOutroPresetId = useAppStore((s) => s.setSelectedOutroPresetId);
+
+  const [introPresets, setIntroPresets] = useState([]);
+  const [outroPresets, setOutroPresets] = useState([]);
+  const [showPackaging, setShowPackaging] = useState(false);
 
   // Voice config
   const maleVoiceId = useAppStore((s) => s.maleVoiceId);
@@ -127,6 +135,17 @@ export default function ZeroStatePage() {
       .then((r) => r.json())
       .then((data) => {
         if (data.voices) setFetchedVoices(data.voices);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch intro/outro presets from settings on mount
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.intro_presets) setIntroPresets(data.intro_presets);
+        if (data.outro_presets) setOutroPresets(data.outro_presets);
       })
       .catch(() => {});
   }, []);
@@ -673,6 +692,61 @@ export default function ZeroStatePage() {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Packaging Config — intro/outro selector */}
+        <div className="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5 space-y-3">
+          <button
+            onClick={() => setShowPackaging(!showPackaging)}
+            className="flex items-center justify-between w-full text-xs font-medium text-slate-400"
+          >
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal size={14} className="text-brand-tertiary" />
+              <span>播客包装（开场白 / 片尾）</span>
+            </div>
+            <ChevronDown size={12} className={`text-slate-500 transition-transform ${showPackaging ? "rotate-180" : ""}`} />
+          </button>
+
+          {showPackaging && (
+            <div className="space-y-3 pt-1">
+              {/* Intro preset selector */}
+              <div>
+                <label className="text-[10px] text-slate-500 mb-1 block">开场白</label>
+                <select
+                  value={selectedIntroPresetId || ""}
+                  onChange={(e) => setSelectedIntroPresetId(e.target.value || null)}
+                  className="w-full bg-[#1a1a1c] border border-[#2a2a2a] rounded-lg py-1.5 px-2 text-xs text-white outline-none focus:border-brand-pink/30"
+                >
+                  <option value="">使用默认开场白</option>
+                  {(introPresets || []).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              {/* Outro preset selector */}
+              <div>
+                <label className="text-[10px] text-slate-500 mb-1 block">片尾</label>
+                <select
+                  value={selectedOutroPresetId || ""}
+                  onChange={(e) => setSelectedOutroPresetId(e.target.value || null)}
+                  className="w-full bg-[#1a1a1c] border border-[#2a2a2a] rounded-lg py-1.5 px-2 text-xs text-white outline-none focus:border-brand-pink/30"
+                >
+                  <option value="">使用默认片尾</option>
+                  {(outroPresets || []).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="text-right">
+                <button
+                  onClick={() => setPage("myTemplates")}
+                  className="text-[10px] text-brand-pink hover:text-brand-pink/80 transition-colors"
+                >
+                  管理模板 →
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Primary CTA */}

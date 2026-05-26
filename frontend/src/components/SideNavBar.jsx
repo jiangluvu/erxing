@@ -38,7 +38,8 @@ export default function SideNavBar() {
   const navItems = [
     { id: "home", label: "新播客", icon: Sparkles },
     { id: "myPodcasts", label: "我的播客", icon: Library, badge: String(genCount) },
-    { id: "brand", label: "播客工厂", icon: Music },
+    { id: "workshop", label: "播客工坊", icon: Music },
+    { id: "myTemplates", label: "我的模板", icon: FileText },
     { id: "myVoices", label: "我的声音", icon: Mic },
   ];
 

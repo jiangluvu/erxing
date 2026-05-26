@@ -1,8 +1,8 @@
-import { useRef, useCallback, useState } from "react";
+import { useRef, useCallback, useState, useEffect } from "react";
 import { useAppStore } from "../store";
 import { usePlayer } from "../hooks/usePlayer";
 import { useGeneration } from "../hooks/useGeneration";
-import { addFavorite, downloadPodcast, reportUserAction } from "../api";
+import { addFavorite, downloadPodcast, reportUserAction, getPodcastDetail } from "../api";
 import {
   ArrowLeft,
   Heart,
@@ -35,6 +35,9 @@ export default function PlayerPage() {
   const activeTranscriptIndex = useAppStore((s) => s.activeTranscriptIndex);
   const sessionId = useAppStore((s) => s.sessionId);
   const showToast = useAppStore((s) => s.showToast);
+  const chapters = useAppStore((s) => s.chapters);
+  const setChapters = useAppStore((s) => s.setChapters);
+  const timings = useAppStore((s) => s.timings);
 
   const { togglePlay, seek, seekRelative } = usePlayer();
   const { startGeneration } = useGeneration();
@@ -62,6 +65,16 @@ export default function PlayerPage() {
       });
     }
   }, [fullAudioUrl, sessionId, currentPodcast]);
+
+  // Fetch chapter and timing data
+  useEffect(() => {
+    if (!sessionId) return;
+    getPodcastDetail(sessionId)
+      .then((data) => {
+        if (data.chapters) setChapters(data.chapters);
+      })
+      .catch(() => {});
+  }, [sessionId, setChapters]);
 
   const handleGenerateFromPlayer = async () => {
     const topic = currentPodcast?.title || "";
@@ -286,7 +299,7 @@ export default function PlayerPage() {
             </div>
             <div
               ref={progressRef}
-              className="h-1.5 bg-white/5 rounded-full overflow-hidden cursor-pointer mb-6"
+              className="h-1.5 bg-white/5 rounded-full overflow-hidden cursor-pointer mb-2 relative"
               onClick={handleProgressClick}
               onMouseDown={handleProgressDrag}
             >
@@ -294,7 +307,54 @@ export default function PlayerPage() {
                 className="h-full rounded-full bg-gradient-to-r from-brand-pink to-brand-tertiary"
                 style={{ width: `${progress}%` }}
               />
+              {/* Chapter markers */}
+              {chapters.length > 1 && chapters.map((ch) => {
+                if (ch.start_time === undefined || duration === 0) return null;
+                const left = (ch.start_time / duration) * 100;
+                if (left < 0 || left > 100) return null;
+                return (
+                  <div
+                    key={ch.id || ch.t}
+                    className="absolute top-0 w-0.5 h-full bg-white/30 hover:bg-white/60 cursor-pointer group"
+                    style={{ left: `${left}%` }}
+                    title={ch.t}
+                    onClick={(e) => { e.stopPropagation(); seek(ch.start_time); }}
+                  >
+                    <div className="absolute -top-7 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 bg-[#1a1a1c] border border-[#2a2a2a] text-[10px] text-white px-1.5 py-0.5 rounded whitespace-nowrap transition-opacity pointer-events-none z-10">
+                      {ch.t}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
+            {/* Chapter nav */}
+            {chapters.length > 1 && (
+              <div className="flex items-center justify-center gap-4 mb-4">
+                <button
+                  onClick={() => {
+                    const cur = chapters.find((ch) => ch.start_time <= currentTime && ch.end_time > currentTime)
+                      || chapters.slice().reverse().find((ch) => ch.start_time <= currentTime);
+                    const idx = cur ? chapters.indexOf(cur) : 0;
+                    if (idx > 0) seek(chapters[idx - 1].start_time);
+                  }}
+                  className="text-[10px] text-slate-500 hover:text-white transition-colors flex items-center gap-1"
+                >
+                  <SkipBack size={12} /> 上一章
+                </button>
+                <span className="text-[10px] text-slate-600">|</span>
+                <button
+                  onClick={() => {
+                    const cur = chapters.find((ch) => ch.start_time <= currentTime && ch.end_time > currentTime)
+                      || chapters.slice().reverse().find((ch) => ch.start_time <= currentTime);
+                    const idx = cur ? chapters.indexOf(cur) : -1;
+                    if (idx >= 0 && idx < chapters.length - 1) seek(chapters[idx + 1].start_time);
+                  }}
+                  className="text-[10px] text-slate-500 hover:text-white transition-colors flex items-center gap-1"
+                >
+                  下一章 <SkipForward size={12} />
+                </button>
+              </div>
+            )}
             {hasAudio ? (
               <div className="flex items-center justify-center gap-6">
                 <button
@@ -345,15 +405,31 @@ export default function PlayerPage() {
               scriptData.map((item, i) => {
                 const isActive = i === activeTranscriptIndex;
                 const isYang = item.speaker === "主持";
+                // Show chapter header when section_id changes
+                const prevSectionId = i > 0 ? scriptData[i - 1].section_id : null;
+                const currentSectionId = item.section_id !== undefined ? item.section_id : null;
+                const showChapterHeader = currentSectionId !== null && currentSectionId !== prevSectionId && chapters.length > 0;
+                const chapterInfo = chapters.find((ch) => ch.id === currentSectionId);
                 return (
-                  <div
-                    key={i}
-                    className={`flex gap-3 p-3 rounded-xl transition-all ${
-                      isActive
-                        ? "bg-white/5 border-l-2 border-brand-pink"
-                        : ""
-                    }`}
-                  >
+                  <div key={i}>
+                    {showChapterHeader && chapterInfo && (
+                      <div className="sticky top-0 py-2 px-1 bg-[#0c0c0e] z-10">
+                        <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                          {chapterInfo.t}
+                        </div>
+                      </div>
+                    )}
+                    <div
+                      className={`flex gap-3 p-3 rounded-xl transition-all cursor-pointer ${
+                        isActive
+                          ? "bg-white/5 border-l-2 border-brand-pink"
+                          : "hover:bg-white/[0.02]"
+                      }`}
+                      onClick={() => {
+                        const timing = timings?.[i];
+                        if (timing && timing.start !== undefined) seek(timing.start);
+                      }}
+                    >
                     <span
                       className={`text-xs font-bold flex-shrink-0 pt-0.5 ${
                         isYang ? "text-brand-pink" : "text-slate-500"
@@ -369,6 +445,7 @@ export default function PlayerPage() {
                       {item.text}
                     </p>
                   </div>
+                    </div>
                 );
               })
             ) : (

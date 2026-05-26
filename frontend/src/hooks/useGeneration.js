@@ -39,6 +39,15 @@ export function useGeneration() {
 
   const startGeneration = useCallback(
     async (payload) => {
+      // Inject selected intro/outro preset IDs
+      const state = useAppStore.getState();
+      if (state.selectedIntroPresetId) {
+        payload.intro_preset_id = state.selectedIntroPresetId;
+      }
+      if (state.selectedOutroPresetId) {
+        payload.outro_preset_id = state.selectedOutroPresetId;
+      }
+
       // Clear previous state
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current);

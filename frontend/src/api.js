@@ -337,3 +337,29 @@ export function createExperiment(payload) {
 export function getExperimentResults(expId) {
   return fetchJSON(`/experiments/${encodeURIComponent(expId)}/results`);
 }
+
+// ============ INTRO/OUTRO PRESETS ============
+export function generateIntroPresets({ topic, count = 3 }) {
+  return fetchJSON("/generate-intro-presets", {
+    method: "POST",
+    body: JSON.stringify({ topic, count }),
+  });
+}
+
+export function generateOutroPresets({ topic, count = 3 }) {
+  return fetchJSON("/generate-outro-presets", {
+    method: "POST",
+    body: JSON.stringify({ topic, count }),
+  });
+}
+
+export function saveSettingsPresets(presets) {
+  return fetchJSON("/settings/presets", {
+    method: "POST",
+    body: JSON.stringify(presets),
+  });
+}
+
+export function getPodcastDetail(sessionId) {
+  return fetchJSON(`/podcast/${encodeURIComponent(sessionId)}/detail`);
+}

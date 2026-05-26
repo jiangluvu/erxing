@@ -9,7 +9,8 @@ import GenerationPage from "./pages/GenerationPage";
 import PlayerPage from "./pages/PlayerPage";
 import DetailPage from "./pages/DetailPage";
 import SettingsPage from "./pages/SettingsPage";
-import BrandPage from "./pages/BrandPage";
+import WorkshopPage from "./pages/WorkshopPage";
+import MyTemplatesPage from "./pages/MyTemplatesPage";
 import AccountPage from "./pages/AccountPage";
 import SubscriptionPage from "./pages/SubscriptionPage";
 import SearchPage from "./pages/SearchPage";
@@ -30,7 +31,8 @@ const pages = {
   player: PlayerPage,
   detail: DetailPage,
   settings: SettingsPage,
-  brand: BrandPage,
+  workshop: WorkshopPage,
+  myTemplates: MyTemplatesPage,
   account: AccountPage,
   subscriptions: SubscriptionPage,
   search: SearchPage,

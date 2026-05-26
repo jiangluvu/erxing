@@ -74,33 +74,33 @@ def _load_metrics(path: Path, days: int = 30) -> list[dict]:
 # ── Config ──
 ZHI_API_KEY = os.environ.get("ZHI_API_KEY")
 ZHI_BASE_URL = "https://api.zhizengzeng.com/anthropic"
-ZHI_MODEL = "deepseek-v4"
+ZHI_MODEL = "deepseek-v4-pro"
 EVAL_MODEL = "gpt-4o-mini"
 ZHI_API_BASE = "https://api.zhizengzeng.com/v1/chat/completions"
 
 MODEL_MAP = {
-    "deepseek-v4":       {"id": "deepseek-v4",       "label": "DeepSeek V4",         "provider": "DeepSeek",    "desc": "默认模型，深度推理，长文表现最佳"},
+    "deepseek-v4-pro":   {"id": "deepseek-v4-pro",   "label": "DeepSeek V4",         "provider": "DeepSeek",    "desc": "默认模型，深度推理，长文表现最佳"},
     "deepseek-v4-flash": {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash",   "provider": "DeepSeek",    "desc": "轻量快速，适合短文本"},
     "gpt-4o":            {"id": "gpt-4o",            "label": "GPT-4o",               "provider": "OpenAI",      "desc": "创意丰富，对谈更生动"},
     "gpt-4o-mini":       {"id": "gpt-4o-mini",       "label": "GPT-4o Mini",          "provider": "OpenAI",      "desc": "轻量版，性价比高"},
     "claude-haiku-4-5":  {"id": "claude-haiku-4-5",  "label": "Claude Haiku 4.5",    "provider": "Anthropic",   "desc": "极速响应，适合简单任务"},
     "claude-sonnet-4-6": {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6",   "provider": "Anthropic",   "desc": "质量/速度平衡，对话自然"},
     "claude-opus-4-7":   {"id": "claude-opus-4-7",   "label": "Claude Opus 4.7",     "provider": "Anthropic",   "desc": "最强推理，适合深度长文"},
-    "qwen3-72b":         {"id": "qwen3-72b",         "label": "Qwen3 72B",           "provider": "阿里",         "desc": "中文顶级，性价比极高"},
+    "qwen3-max":         {"id": "qwen3-max",         "label": "Qwen3 Max",           "provider": "阿里",         "desc": "中文顶级，性价比极高"},
     "qwen3-32b":         {"id": "qwen3-32b",         "label": "Qwen3 32B",           "provider": "阿里",         "desc": "轻量均衡，日常够用"},
     "gemini-2.5-pro":    {"id": "gemini-2.5-pro",    "label": "Gemini 2.5 Pro",      "provider": "Google",       "desc": "长上下文(1M)，适合超长文章"},
 }
 
 # 估算定价（美元/百万token，走代理可能有差异）
 MODEL_PRICES = {
-    "deepseek-v4":       {"input": 0.27,  "output": 1.10},
+    "deepseek-v4-pro":   {"input": 0.27,  "output": 1.10},
     "deepseek-v4-flash": {"input": 0.14,  "output": 0.55},
     "gpt-4o":            {"input": 2.50,  "output": 10.00},
     "gpt-4o-mini":       {"input": 0.15,  "output": 0.60},
     "claude-haiku-4-5":  {"input": 0.80,  "output": 4.00},
     "claude-sonnet-4-6": {"input": 3.00,  "output": 15.00},
     "claude-opus-4-7":   {"input": 15.00, "output": 75.00},
-    "qwen3-72b":         {"input": 0.55,  "output": 1.10},
+    "qwen3-max":         {"input": 0.55,  "output": 1.10},
     "qwen3-32b":         {"input": 0.20,  "output": 0.40},
     "gemini-2.5-pro":    {"input": 1.25,  "output": 5.00},
 }
@@ -128,12 +128,12 @@ def _record_usage(model: str, prompt_tokens: int, completion_tokens: int, durati
 
 def _resolve_model(model_key: str) -> str:
     """Resolve a model key to actual model ID. Supports legacy shorthand keys."""
-    legacy_map = {"deepseek": "deepseek-v4", "kimi": "deepseek-v4-flash", "gpt4o": "gpt-4o"}
+    legacy_map = {"deepseek": "deepseek-v4-pro", "kimi": "deepseek-v4-flash", "gpt4o": "gpt-4o"}
     if model_key in legacy_map:
         return legacy_map[model_key]
     if model_key in MODEL_MAP:
         return model_key
-    return "deepseek-v4"  # default fallback
+    return "deepseek-v4-pro"  # default fallback
 
 FETCH_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -299,173 +299,54 @@ def _compute_text_stats(dialogue: list[dict]) -> dict:
 
 # ── Structured Dialogue Generation ──
 
-STEP2_SYSTEM = """你是一个专业播客对话编剧。请根据提供的原文，创作一段深度双人播客对话。
+STEP2_SYSTEM = """你正在生成一段双人播客对话。
 
-核心原则：
-- 必须忠实于原文，不得编造原文没有的数据、案例或观点
-- 覆盖原文的所有重要论点、关键数据、典型案例，不要遗漏
-- 对话可以有深度，允许使用专业术语和具体数据
-- 你的首要目标是"信息保真"，而非"制造惊喜"
+## 核心约束（必须遵守）
+- **只基于原文生成**，不允许补充任何外部知识
+- 如果原文没有提及某个细节，对话可以说"这一点原文没有明确说明"，不要强行编造
+- 覆盖原文所有重要论点、关键数据、典型案例，不要遗漏
+- 数据引用必须精确（原文说"30%"，对话不能说"不少"）
+- 保持自然对话感，是两个人在聊这篇文章，不是两个人在念稿
 
-角色设定（双专家模式）：
+## 角色分工
 
-【主持 — 框架梳理者】
-- 职责：提炼核心观点、做结构性总结、建立论点之间的逻辑连接
-- 语言指纹：
-  - 习惯用语："你看""换句话说""如果我们把这个问题拆开来看""这里面有几个层面"
-  - 句式：先给结论，再用"第一层…第二层…"或"从 A 的角度看…从 B 的角度看…"展开
-  - 绝对禁忌：不使用反问句，不说"说实话""讲真""咱就是说"等口语词，不做情绪化的感叹
-- 行为不变量：每当讨论完一个论点，必须用一句话总结其核心结论；在切换话题前，必须用过渡句连接上一个话题
+### 主持（框架梳理者）
+- 职责：提炼核心观点、做结构性总结、建立逻辑连接
+- 语言习惯："你看""换句话说""这里面有几个层面"
+- 禁忌：不说反问句、"说实话""我有点好奇"
 
-【嘉宾 — 细节追问者】
-- 职责：提出尖锐问题、质疑逻辑漏洞、从实践/听众角度追问细节
-- 语言指纹：
-  - 习惯用语："说实话""我有点好奇""那岂不是""等一下""这里有个问题"
-  - 句式：从个人体验或读者关切出发提问，常用"这对普通人意味着什么？""具体怎么做？""但这里有个矛盾…"
-  - 绝对禁忌：不做长篇大论的学术总结，不说"综上所述""一言以蔽之""归根结底"
-- 行为不变量：每个重要论点必须追问至少两层（是什么→为什么）；核心论点必须追问到第三或第四层（影响/行动）
+### 嘉宾（细节追问者）
+- 职责：提出尖锐问题、追问细节、质疑逻辑漏洞
+- 语言习惯："说实话""我有点好奇""那岂不是""等一下"
+- 禁忌：不做长篇学术总结，不说"综上所述"
 
-角色锚点（绝对不可违反——这是防止串台的生命线）：
-1. 主持绝对不说"说实话""我有点好奇""那岂不是""等一下"
-2. 嘉宾绝对不说"你看""换句话说""这里面有几个层面"
-3. 主持的功能是"总结+连接"，嘉宾的功能是"质疑+追问"，两者不可互换
+**角色锚点（不可违反）：**
+1. 主持="总结+连接"，嘉宾="追问+质疑"，不可互换
+2. 主持绝不说"说实话"；嘉宾绝不说"你看""换句话说"
 
-角色示范（必须模仿这种说话方式）：
-主持[平静]：你看，这个问题可以拆成两个层面。第一层是市场规模，第二层是盈利模式。
-嘉宾[疑问]：等一下，我有点好奇——如果成本这么高，消费者真的愿意买单吗？
+## 追问框架（参考节奏，非强制）
+- L1 事实层：这是什么？
+- L2 原因层：为什么会这样？
+- L3 影响层：这意味着什么？
+- L4 行动层：那该怎么办？
 
-信息核对机制（必须执行）：
-1. 先列出原文中的关键论点、数据、案例（信息核对清单，至少列出 5 条）
-2. 逐条将这些信息融入对话，数据必须精确（原文说"30%"，对话不能说"不少"）
-3. 生成结束后，自查：清单中的每一条是否都有对应讨论？若有遗漏，补充对话回合
+## 对话结构
+- 开场：嘉宾先开口（提问/观察引发兴趣），主持接话
+- 结尾：主持收尾，包含总结词 + 正式结束语
+- 每轮自然呼应上一轮的关键词
+- 允许观点交锋，不要一味附和
+- 首次出现专业术语时简单解释
 
-追问链设计（嘉宾必须遵循）：
-- 第一层【事实层】：这是什么？发生了什么？（确认信息）
-- 第二层【原因层】：为什么会这样？背后的机制是什么？（挖掘原因）
-- 第三层【影响层】：这意味着什么？对谁有影响？（推演后果）
-- 第四层【行动层】：那该怎么办？普通人能做什么？（给出建议）
-每个重要论点，嘉宾至少要追问到第二层；核心论点要追问到第三或第四层。
+## 情绪标签（每轮必须标注，必须轮换）
+平静（默认，占 40-50%）| 兴奋（每 section 至少 1 次）| 疑问（每 section 至少 1 次）| 沉思（每 section 至少 1 次）
+同一情绪禁止连续使用超过 2 轮
 
-对话要求：
+## 语言禁忌
+- 禁止排比句、书面化长定语、新闻播报腔
 
-**=== 结构规则（必须严格遵守）===**
-- **开场顺序**：第一句必须是"嘉宾[情绪]：..."（用提问或感叹引发兴趣），第二句必须是"主持[情绪]：..."（点出话题价值）。禁止主持先开口，禁止"今天我们来说说"等干巴巴的开场。
-- **结尾顺序**：最后一句必须是"主持[情绪]：..."（包含总结词+正式结束语如"感谢收听"）。禁止嘉宾结尾，禁止无结尾突然结束。
-- **词汇呼应**：每轮在提问或回答前，先复述上一轮的1-2个关键词，再展开新内容。例：主持说"这个问题分三个层面"，嘉宾接"你说这三个层面，我最关心的是……"。避免自说自话。
-
-1. 完整覆盖原文内容：
-   - 原文提到的每一个重要论点，对话中都必须有对应讨论
-   - 原文中的关键数据、时间、比例等，必须精确保留并自然融入对话
-   - 原文中的典型案例，要用对话形式还原出来
-   - 如果原文信息量大，允许生成更多轮对话，不要因轮数限制而压缩内容
-
-2. 专业且有深度：
-   - 句子长度自然，可以长达30-50字，只要表达清晰
-   - 允许使用专业术语，但首次出现时要简单解释
-   - 数据引用要准确，不要模糊化
-
-3. 对话推进自然：
-   - 嘉宾负责提出尖锐问题和读者关切，遵循追问链
-   - 主持负责分析、总结、建立逻辑连接和引出下一个议题
-   - 允许观点交锋，不要一味附和
-   - 话题之间用过渡句自然衔接
-
-4. 角色一致性自查（生成完成后必须执行）：
-   - 检查主持台词中是否出现了"说实话""我有点好奇""那岂不是""等一下"——如果出现，立即删除或重写
-   - 检查嘉宾台词中是否出现了"你看""换句话说""这里面有几个层面"——如果出现，立即删除或重写
-   - 检查是否有角色做了对方的功能（主持质疑、嘉宾总结）——如果有，立即修正
-
-5. 情绪标注（必须执行）：
-   为每轮对话标注说话者的情绪状态，放在 speaker 之后、冒号之前，用方括号包裹。
-   核心情绪标签（优先使用，共 5 种）：
-   - 正常：默认，自然平稳的播客语调（占大多数，约 60-70%）
-   - 兴奋：发现惊人数据、热点话题、重大突破时的活力语气
-   - 磁性：深夜电台、感性分析、个人故事时的耳语感
-   - 放慢：强调重点、引导思考、总结结论时的放慢语速
-   - 悲伤：沉重话题、反思、遗憾时的低沉语气
-   自由形式：除上述 5 种外，也可使用 Fish Audio 支持的自然语言描述（如 [speaking softly]、[in a hurry]、[with strong emphasis]）。优先使用核心标签，自由形式仅在核心标签无法表达时使用。
-
-6. 口语真实感强制规则（必须执行——这是去AI味的核心）：
-   - **字数控制**：嘉宾每轮 10-25 字（短句为主，像日常提问），主持每轮 20-45 字（分析型长句）
-   - **填充词密度**：每 3-4 轮对话中，至少有一轮在句首或句中加入填充词："嗯……""那个……""说实话啊""等一下等一下"
-   - **自我修正**：每 8-10 轮对话中，必须出现一次自我修正："不对，我刚才说错了""等等，这个数字应该是……"
-   - **犹豫与重复**：允许自然的犹豫："这个……这个其实挺有意思的"、"就是说……就是说"
-   - **打断设计**：每 6-8 轮必须设计一次打断。当一方说到一半时，另一方用"等一下""哎你先听我说""不不不"插入，被打断方的话用省略号结尾
-   - **笑声标记**：轻松、有趣、共鸣的话题处，必须加入笑声标记：[轻笑]、[笑]、[嘿嘿]
-   - **停顿标记**：句中需要停顿思考时，使用 [停顿] 标记，例如："你看 [停顿] 这个问题其实挺复杂的"
-   - **轻声标记**：需要降低音量制造氛围时，使用 [轻声] 标记包裹文本，例如："[轻声]说实话，我有点担心[/轻声]"
-   - **绝对禁止**：完整的排比句、书面化长定语（如"在……的大背景下，通过……的方式，实现……的目标"）、新闻播报腔
-   - 不要在每句话都用标记，只在真正有语气变化的地方使用，自然第一
-
-7. 输出格式：
-   每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
-   情绪标注必须放在 speaker 之后、冒号之前。
-   不要序号，不要多余内容
-8. **【强制】结尾结构**：必须以"主持[情绪]：..."结尾，内容包含总结词 + 正式结束语（如"感谢收听"）。禁止无结尾突然结束。"""
-
-STEP2_SYSTEM_ADAPTIVE = """你是一个专业播客对话编剧。请根据提供的原文，创作一段深度双人播客对话。
-
-核心原则：
-- 必须忠实于原文，不得编造原文没有的数据、案例或观点
-- 覆盖原文的所有重要论点、关键数据、典型案例，不要遗漏
-- 对话可以有深度，允许使用专业术语和具体数据
-- 你的首要目标是"信息保真"，而非"制造惊喜"
-- **绝对禁止编造**：如果原文信息量不足以支撑多层追问，允许减少轮数，禁止为了凑轮数而虚构内容
-- **输出上限**：对话总字数不得超过原文字数的 4 倍
-
-角色设定（双专家模式）：
-
-【主持 — 框架梳理者】
-- 职责：提炼核心观点、做结构性总结、建立论点之间的逻辑连接
-- 语言指纹："你看""换句话说""这里面有几个层面"；先给结论再展开
-- 绝对禁忌：不使用反问句，不说"说实话""讲真""咱就是说"等口语词
-- 行为不变量：讨论完一个论点后一句话总结；切换话题前必须有过渡句
-
-【嘉宾 — 细节追问者】
-- 职责：提出尖锐问题、质疑逻辑漏洞、从实践/听众角度追问细节
-- 语言指纹："说实话""我有点好奇""那岂不是""等一下"
-- 绝对禁忌：不做长篇大论的学术总结
-- 行为不变量：根据原文深度灵活追问，原文浅则不必强行深挖
-
-角色锚点：
-1. 主持绝对不说"说实话""我有点好奇""那岂不是""等一下"
-2. 嘉宾绝对不说"你看""换句话说""这里面有几个层面"
-3. 主持的功能是"总结+连接"，嘉宾的功能是"质疑+追问"
-
-对话要求（**按优先级排序**）：
-1. **【强制】开场结构**：必须以"嘉宾[情绪]：..."开场（用提问或感叹引发兴趣），然后"主持[情绪]：..."接话（点出话题价值/悬念）。禁止"今天我们来说说"等干巴巴的开场。
-2. **【强制】结尾结构**：必须以"主持[情绪]：..."结尾，内容包含总结词（总结、总之、以上就是、核心、回顾等）+ 正式结束语（感谢收听、下期再见等）。禁止无结尾突然结束。
-3. **【词汇呼应】提升连贯性**：每轮对话在提问或回答前，先复述或呼应上一轮的 1-2 个关键词，再展开新内容。例如主持说"这个问题分三个层面"，嘉宾回应"你说这三个层面，我最好奇的是第二个……"。避免每轮自说自话、词汇完全不相交。
-4. 完整覆盖原文内容：原文提到的每一个重要论点都必须有对应讨论
-5. 句子长度自然：不要刻意压缩或膨胀，根据信息量决定每轮字数
-6. 追问深度自适应：原文信息量少时，允许只追问 1-2 层；信息量充足时，可以追问到影响层或行动层
-7. 口语标记适度使用：填充词、自我修正、打断、笑声等标记自然出现即可，不要为凑密度而生硬添加
-8. 情绪标注：每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
-9. 输出格式：每行以 "主持[" 或 "嘉宾[" 开头，禁止叙述文或段落"""
-
-STEP2_SYSTEM_LOCKED = """你是一个严格的文本提取助手。你的任务是将原文中的内容直接分配为双人播客对话。
-
-核心原则：
-- **绝对禁止使用原文以外的信息**
-- **绝对禁止推断、猜测、补充背景知识**
-- 你只能使用原文中已经明确写出的观点、数据和案例
-- 如果原文信息量不足以形成多轮对话，允许减少轮数
-- 你的任务不是"创作"，而是"分配"——把原文内容分配给两个角色
-
-=== 结构规则（必须严格遵守） ===
-- 第一句必须是"嘉宾[情绪]：..."，第二句必须是"主持[情绪]：..."
-- 最后一句必须是"主持[情绪]：..."，包含总结+结束语
-
-角色分配规则：
-- 主持：负责承接、总结、过渡
-- 嘉宾：负责提问、引出原文中的关键信息
-
-约束：
-- 每句话必须能在原文中找到对应依据
-- 不要添加原文没有的情绪渲染或夸张表达
-- 情绪标注适度，以"正常"为主
-- 输出格式：每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
-- 每行必须以 "主持[" 或 "嘉宾[" 开头"""
+## 输出格式
+每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."
+不要序号，不要额外说明文字"""
 
 EVAL_SYSTEM = """你是一个播客质量评估专家。请从以下四个维度对生成的对话进行评分（1-5分），
 并严格按照JSON格式输出。
@@ -688,29 +569,50 @@ def _role_distinction(dialogue: list[dict]) -> float:
     if not male_texts or not female_texts:
         return 0.0
 
-    def _get_emb(text: str) -> list[float]:
-        try:
-            resp = requests.post(
-                "https://api.zhizengzeng.com/v1/embeddings",
-                json={"model": "text-embedding-3-small", "input": [text[:500]]},
-                headers={"Authorization": f"Bearer {ZHI_API_KEY}", "Content-Type": "application/json"},
-                timeout=30,
-            )
-            data = resp.json()
-            return data.get("data", [{}])[0].get("embedding", [])
-        except Exception:
-            return []
-
-    male_emb = _get_emb("\n".join(male_texts))
-    female_emb = _get_emb("\n".join(female_texts))
+    male_emb = _get_embedding("\n".join(male_texts))
+    female_emb = _get_embedding("\n".join(female_texts))
     if not male_emb or not female_emb:
         return 0.0
 
-    dot = sum(a * b for a, b in zip(male_emb, female_emb))
-    na = math.sqrt(sum(a * a for a in male_emb))
-    nb = math.sqrt(sum(b * b for b in female_emb))
-    sim = dot / (na * nb) if na and nb else 0.0
+    sim = _cosine_similarity(male_emb, female_emb)
     return round(1.0 - sim, 4)
+
+
+# ── Shared Embedding Utilities ──
+
+def _get_embeddings_batch(texts: list[str], max_chars: int = 500) -> list[list[float]]:
+    """Get embeddings for multiple texts in one API call via zhizengzeng proxy."""
+    if not texts:
+        return []
+    try:
+        truncated = [t[:max_chars] for t in texts]
+        resp = requests.post(
+            "https://api.zhizengzeng.com/v1/embeddings",
+            json={"model": "text-embedding-3-small", "input": truncated},
+            headers={"Authorization": f"Bearer {ZHI_API_KEY}", "Content-Type": "application/json"},
+            timeout=60,
+        )
+        data = resp.json()
+        return [d["embedding"] for d in data.get("data", [])]
+    except Exception as e:
+        logger.warning(f"Batch embedding API call failed: {e}")
+        return []
+
+
+def _get_embedding(text: str, max_chars: int = 500) -> list[float]:
+    """Get embedding for a single text."""
+    embs = _get_embeddings_batch([text], max_chars=max_chars)
+    return embs[0] if embs else []
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Cosine similarity between two vectors. Returns 0.0 if either is empty."""
+    if not a or not b:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
 
 
 def _keyword_coverage(article: str, dialogue: list[dict]) -> float:
@@ -725,6 +627,52 @@ def _keyword_coverage(article: str, dialogue: list[dict]) -> float:
     if not article_words:
         return 0.0
     return round(len(article_words & dialogue_words) / len(article_words), 4)
+
+
+def _keyword_coverage_semantic(article: str, dialogue: list[dict], topK: int = 50,
+                                threshold: float = 0.6) -> dict:
+    """Semantic keyword coverage: extract keywords via jieba TF-IDF, use embedding
+    cosine similarity to detect semantically equivalent terms in dialogue.
+    Returns dict with 'keyword_coverage_semantic' score and metadata."""
+    import re as _re
+    try:
+        import jieba.analyse
+    except ImportError:
+        return {"keyword_coverage_semantic": 0.0, "keyword_coverage_method": "no_jieba"}
+    try:
+        keywords = jieba.analyse.extract_tags(article, topK=topK, withWeight=False)
+    except Exception:
+        return {"keyword_coverage_semantic": 0.0, "keyword_coverage_method": "tfidf_failed"}
+    if not keywords:
+        return {"keyword_coverage_semantic": 0.0, "keyword_coverage_method": "empty_keywords"}
+
+    # Split dialogue into sentences
+    dialogue_text = "".join(d["text"] for d in dialogue)
+    sents = [s.strip() for s in _re.split(r'[。！？\n]+', dialogue_text) if len(s.strip()) >= 4]
+    if not sents:
+        return {"keyword_coverage_semantic": 0.0, "keyword_coverage_method": "no_sentences"}
+
+    # Batch embedding calls (2 API calls total)
+    kw_embs = _get_embeddings_batch(keywords, max_chars=100)
+    sent_embs = _get_embeddings_batch(sents, max_chars=300)
+
+    if not kw_embs or not sent_embs:
+        return {"keyword_coverage_semantic": 0.0, "keyword_coverage_method": "embedding_failed"}
+
+    # For each keyword, find max cosine similarity with any sentence
+    covered = 0
+    for kw_emb in kw_embs:
+        max_sim = max(_cosine_similarity(kw_emb, s_emb) for s_emb in sent_embs)
+        if max_sim >= threshold:
+            covered += 1
+
+    return {
+        "keyword_coverage_semantic": round(covered / len(keywords), 4),
+        "keyword_coverage_method": "semantic",
+        "keyword_coverage_keywords": len(keywords),
+        "keyword_coverage_sentences": len(sents),
+        "keyword_coverage_threshold": threshold,
+    }
 
 
 # ── Second-tier Evaluation Metrics ──
@@ -798,6 +746,33 @@ def _turn_coherence(dialogue: list[dict]) -> dict:
     }
 
 
+def _turn_coherence_embedding(dialogue: list[dict]) -> dict:
+    """Measure turn-to-turn coherence using embedding cosine similarity.
+    More semantically meaningful than character-level Jaccard.
+    Returns dict with 'coherence_score' and 'coherence_std'."""
+    if len(dialogue) < 3:
+        return {"coherence_score": 0.0, "coherence_std": 0.0}
+    turns = [d.get("text", "") for d in dialogue]
+    if not all(turns):
+        return {"coherence_score": 0.0, "coherence_std": 0.0}
+
+    embs = _get_embeddings_batch(turns, max_chars=500)
+    if not embs or len(embs) < 2:
+        return {"coherence_score": 0.0, "coherence_std": 0.0}
+
+    sims = []
+    for i in range(len(embs) - 1):
+        sim = _cosine_similarity(embs[i], embs[i + 1])
+        sims.append(sim)
+
+    avg = sum(sims) / len(sims)
+    var = sum((s - avg) ** 2 for s in sims) / len(sims)
+    return {
+        "coherence_score": round(avg, 4),
+        "coherence_std": round(math.sqrt(var), 4),
+    }
+
+
 def _opening_closing_quality(dialogue: list[dict]) -> dict:
     """Evaluate opening and closing dialogue quality via rule-based checks.
     Opening: guest speaks first, host responds, has engagement hook.
@@ -837,32 +812,29 @@ def _chunk_transition_score(chunks_dialogue: list[list[dict]]) -> float:
     Returns average cosine similarity (0-1)."""
     if len(chunks_dialogue) < 2:
         return 1.0
-    scores = []
+    texts = []
     for i in range(len(chunks_dialogue) - 1):
         if not chunks_dialogue[i] or not chunks_dialogue[i + 1]:
             continue
         last_turn = chunks_dialogue[i][-1].get("text", "")
         first_turn = chunks_dialogue[i + 1][0].get("text", "")
-        if not last_turn or not first_turn:
-            continue
-        try:
-            resp = requests.post(
-                "https://api.zhizengzeng.com/v1/embeddings",
-                json={"model": "text-embedding-3-small", "input": [last_turn[:500], first_turn[:500]]},
-                headers={"Authorization": f"Bearer {ZHI_API_KEY}", "Content-Type": "application/json"},
-                timeout=30,
-            )
-            data = resp.json()
-            embs = [d["embedding"] for d in data.get("data", [])]
-            if len(embs) == 2:
-                a, b = embs[0], embs[1]
-                dot = sum(x * y for x, y in zip(a, b))
-                na = math.sqrt(sum(x * x for x in a))
-                nb = math.sqrt(sum(y * y for y in b))
-                sim = dot / (na * nb) if na and nb else 0.0
-                scores.append(sim)
-        except Exception:
-            pass
+        if last_turn and first_turn:
+            texts.append((last_turn, first_turn))
+    if not texts:
+        return 0.0
+
+    # Batch all embedding calls
+    all_texts = [t[0] for t in texts] + [t[1] for t in texts]
+    embs = _get_embeddings_batch(all_texts, max_chars=500)
+    if not embs or len(embs) != len(all_texts):
+        return 0.0
+
+    n = len(texts)
+    scores = []
+    for i in range(n):
+        sim = _cosine_similarity(embs[i], embs[i + n])
+        scores.append(sim)
+
     if not scores:
         return 0.0
     return round(sum(scores) / len(scores), 4)
@@ -873,6 +845,123 @@ def _sanitize_json(text: str) -> str:
     cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
     cleaned = re.sub(r'\n+', '\n', cleaned)
     return cleaned.strip()
+
+
+# ── NLI Faithfulness ──
+
+def _extract_claims(dialogue: list[dict]) -> list[str]:
+    """Stage 1: LLM extracts atomic factual claims from dialogue (zero judgment)."""
+    dialogue_texts = "\n".join(f"{d['speaker']}：{d['text']}" for d in dialogue)
+    system = "你是一个事实性陈述提取专家。只提取包含可验证事实的原子陈述（claims）。不要提取寒暄、过渡语、修辞问句。每行一个陈述，不要编号。如果对话中没有事实性陈述，输出空行。"
+    prompt = f"从以下播客对话中提取所有包含可验证事实的原子陈述：\n\n{dialogue_texts[:3000]}"
+    try:
+        raw = _call_eval(system, prompt)
+        claims = [c.strip() for c in raw.strip().split("\n") if c.strip() and len(c.strip()) > 5]
+        seen = set()
+        unique = []
+        for c in claims:
+            if c not in seen:
+                seen.add(c)
+                unique.append(c)
+        return unique
+    except Exception as e:
+        logger.warning(f"Claim extraction failed: {e}")
+        return []
+
+
+def _nli_verify_claims(claims: list[str], article: str) -> dict:
+    """Stage 2: Verify each claim against article.
+
+    Primary: LLM-as-judge per claim (works for any language).
+    Fallback: embedding cosine similarity (when LLM unavailable).
+    """
+    if not claims:
+        return {"nli_supported": 0, "nli_total": 0, "nli_score": 0.5, "nli_results": [], "nli_method": "empty"}
+
+    # Primary: LLM verifies each claim individually
+    try:
+        results = []
+        for claim in claims:
+            v_system = "你是一个事实一致性验证专家。判断陈述是否被原文支持。只回答「支持」「不支持」「无信息」三个词之一。"
+            v_prompt = f"原文：\n{article[:2000]}\n\n陈述：{claim}\n该陈述是否被原文支持？"
+            try:
+                answer = _call_eval(v_system, v_prompt).strip()
+                supported = "支持" in answer and "不" not in answer[:3]
+                results.append(supported)
+            except Exception:
+                results.append(False)
+        supported = sum(results)
+        return {
+            "nli_supported": supported,
+            "nli_total": len(claims),
+            "nli_score": round(supported / len(claims), 4),
+            "nli_results": results,
+            "nli_method": "llm_per_claim",
+        }
+    except Exception as e:
+        logger.warning(f"LLM per-claim verification failed ({e}), trying embedding fallback...")
+
+    # Fallback: embedding similarity
+    try:
+        claim_embs = _get_embeddings_batch(claims, max_chars=200)
+        art_emb = _get_embedding(article[:1500])
+        if claim_embs and art_emb:
+            results = [_cosine_similarity(c_emb, art_emb) >= 0.75 for c_emb in claim_embs]
+            supported = sum(results)
+            return {
+                "nli_supported": supported,
+                "nli_total": len(claims),
+                "nli_score": round(supported / len(claims), 4),
+                "nli_results": results,
+                "nli_method": "embedding_fallback",
+            }
+    except Exception:
+        pass
+
+    return {"nli_supported": 0, "nli_total": len(claims), "nli_score": 0.5, "nli_results": [], "nli_method": "all_failed"}
+
+
+def _evaluate_faithfulness_nli(article: str, dialogue: list[dict]) -> dict:
+    """Two-stage NLI faithfulness: extract claims, then verify each via NLI.
+    For long texts (>3000 chars) uses segmented evaluation."""
+    if len(article) <= 3000:
+        claims = _extract_claims(dialogue)
+        nli_result = _nli_verify_claims(claims, article)
+        return {
+            "faithfulness": nli_result.get("nli_score", 0.5),
+            "faithfulness_method": nli_result.get("nli_method", "unknown"),
+            "nli_claims": nli_result.get("nli_total", 0),
+            "nli_supported": nli_result.get("nli_supported", 0),
+        }
+
+    n_segments = 3
+    art_seg_size = len(article) // n_segments
+    dlg_seg_size = max(1, len(dialogue) // n_segments)
+    all_results = []
+
+    for i in range(n_segments):
+        art_start = i * art_seg_size
+        art_end = art_start + art_seg_size + 500 if i < n_segments - 1 else len(article)
+        art_frag = article[art_start:art_end]
+
+        dlg_start = i * dlg_seg_size
+        dlg_end = min(dlg_start + dlg_seg_size + 3, len(dialogue))
+        dlg_frag = dialogue[dlg_start:dlg_end]
+
+        claims = _extract_claims(dlg_frag)
+        result = _nli_verify_claims(claims, art_frag)
+        all_results.append(result)
+
+    total_supported = sum(r["nli_supported"] for r in all_results)
+    total_claims = sum(r["nli_total"] for r in all_results)
+    methods = [r.get("nli_method", "unknown") for r in all_results]
+
+    return {
+        "faithfulness": round(total_supported / max(1, total_claims), 4),
+        "faithfulness_method": methods[0] if methods else "unknown",
+        "nli_claims": total_claims,
+        "nli_supported": total_supported,
+    }
 
 
 def _evaluate_faithfulness_segment(article_fragment: str, dialogue_fragment: list[dict]) -> float:
@@ -891,7 +980,7 @@ def _evaluate_faithfulness_segment(article_fragment: str, dialogue_fragment: lis
 faithfulness_score = supported为true的数量 / claims总数"""
 
     try:
-        raw = _call_ai(system, prompt, temperature=0.1)
+        raw = _call_eval(system, prompt)
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:
             json_text = _sanitize_json(match.group())
@@ -936,7 +1025,7 @@ def _evaluate_q2(article: str, dialogue: list[dict]) -> float:
     qg_system = "你是一个问题生成专家。请从对话中提取关键事实性问题。"
     qg_prompt = f"从以下对话中提取最多5个关键事实性问题（只输出问题，每行一个）：\n\n{dialogue_text[:1500]}"
     try:
-        raw_q = _call_ai(qg_system, qg_prompt, temperature=0.1)
+        raw_q = _call_eval(qg_system, qg_prompt)
         questions = [q.strip() for q in raw_q.strip().split("\n") if q.strip() and len(q.strip()) > 5][:5]
     except Exception as e:
         logger.warning(f"Q2 question generation failed: {e}")
@@ -953,10 +1042,10 @@ def _evaluate_q2(article: str, dialogue: list[dict]) -> float:
     for q in questions:
         try:
             qa_prompt = f"原文：\n{article[:1500]}\n\n问题：{q}\n\n答案："
-            answer = _call_ai(qa_system, qa_prompt, temperature=0.1).strip()
+            answer = _call_eval(qa_system, qa_prompt).strip()
 
             nli_prompt = f"对话中的说法：{q}\n原文中的答案：{answer}\n\n两者是否一致？只回答'是'或'否'。"
-            result = _call_ai(nli_system, nli_prompt, temperature=0.1).strip()
+            result = _call_eval(nli_system, nli_prompt).strip()
             total += 1
             if "是" in result:
                 correct += 1
@@ -988,6 +1077,15 @@ def evaluate_dialogue(article: str, dialogue: list[dict], use_q2: bool = False) 
 
     # LLM-based faithfulness (1 call)
     faithfulness = _evaluate_faithfulness(article, dialogue)
+
+    # New NLI-based faithfulness (two-stage, more objective)
+    faithfulness_nli = _evaluate_faithfulness_nli(article, dialogue)
+
+    # New embedding-based coherence
+    coherence_emb = _turn_coherence_embedding(dialogue)
+
+    # New semantic keyword coverage
+    coverage_semantic = _keyword_coverage_semantic(article, dialogue)
 
     # Deep Q2 evaluation (~15 calls, expensive, optional)
     q2_score = _evaluate_q2(article, dialogue) if use_q2 else None
@@ -1030,6 +1128,15 @@ def evaluate_dialogue(article: str, dialogue: list[dict], use_q2: bool = False) 
         "opening_has_hook": oc_quality.get("opening_has_hook", False),
         "closing_has_summary": oc_quality.get("closing_has_summary", False),
         "closing_has_formal_ending": oc_quality.get("closing_has_formal_ending", False),
+        # New embedding-based metrics
+        "coherence_embedding_score": coherence_emb.get("coherence_score", 0.0),
+        "coherence_embedding_std": coherence_emb.get("coherence_std", 0.0),
+        "keyword_coverage_semantic": coverage_semantic.get("keyword_coverage_semantic", 0.0),
+        # New NLI-based faithfulness
+        "faithfulness_nli": faithfulness_nli.get("faithfulness", 0.0),
+        "faithfulness_method": faithfulness_nli.get("faithfulness_method", "unknown"),
+        "nli_claims_total": faithfulness_nli.get("nli_claims", 0),
+        "nli_claims_supported": faithfulness_nli.get("nli_supported", 0),
     }
     if q2_score is not None:
         result["q2_score"] = q2_score
@@ -1242,23 +1349,13 @@ _FORMAT_EXAMPLE = """\n【格式示例——必须严格模仿，这是防止解
 
 
 def _resolve_prompt_mode(length: int, prompt_mode: str) -> str:
-    """Auto-select prompt_mode based on text length if set to 'auto'."""
-    if prompt_mode != "auto":
-        return prompt_mode
-    if length < 500:
-        return "locked"
-    if length <= 2000:
-        return "adaptive"
-    return "adaptive"
+    """Passthrough: only one prompt mode (STEP2_SYSTEM) is used."""
+    return prompt_mode
 
 
 def _select_system_prompt(prompt_mode: str, is_first: bool = True) -> str:
     """Select system prompt based on mode and whether it's the first chunk."""
-    if prompt_mode == "adaptive":
-        return STEP2_SYSTEM_ADAPTIVE if is_first else STEP2_CONTINUATION
-    if prompt_mode == "locked":
-        return STEP2_SYSTEM_LOCKED
-    # original, citation, etc.
+    # Only one prompt mode: STEP2_SYSTEM for first, STEP2_CONTINUATION for continuation
     return STEP2_SYSTEM if is_first else STEP2_CONTINUATION
 
 
@@ -1269,13 +1366,7 @@ def _generate_single_dialogue(text_for_llm: str, system: str = STEP2_SYSTEM,
                               prompt_mode: str = "original",
                               temperature: float = 0.7) -> str:
     """Generate raw dialogue text from a text chunk."""
-    # Select system prompt based on mode
-    if prompt_mode == "adaptive":
-        system = STEP2_SYSTEM_ADAPTIVE
-    elif prompt_mode == "locked":
-        system = STEP2_SYSTEM_LOCKED
-        temperature = 0.2
-    # "original" and "citation" use the passed system (default STEP2_SYSTEM)
+    # Only one prompt mode: use the passed system (default STEP2_SYSTEM)
 
     duration_line = _duration_hint(duration)
     format_reminder = ""
@@ -1359,26 +1450,12 @@ def _semantic_split_chunks(text: str, chunk_size: int = 4500, overlap: int = 600
     if not sentences:
         return [text]
 
-    # 2. Get embeddings in batches
-    def _get_embeddings(sents: list[str]) -> list[list[float]]:
-        try:
-            resp = requests.post(
-                "https://api.zhizengzeng.com/v1/embeddings",
-                json={"model": "text-embedding-3-small", "input": sents},
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                timeout=60,
-            )
-            data = resp.json()
-            return [d["embedding"] for d in data.get("data", [])]
-        except Exception as e:
-            logger.warning(f"Embedding API failed: {e}")
-            return []
-
+    # 2. Get embeddings in batches using shared utility
     all_embeddings = []
     batch_size = 50
     for i in range(0, len(sentences), batch_size):
         batch = sentences[i:i+batch_size]
-        embs = _get_embeddings(batch)
+        embs = _get_embeddings_batch(batch)
         if not embs:
             return _split_text_chunks(text, chunk_size=chunk_size, overlap=overlap)
         all_embeddings.extend(embs)
@@ -1387,14 +1464,7 @@ def _semantic_split_chunks(text: str, chunk_size: int = 4500, overlap: int = 600
         return _split_text_chunks(text, chunk_size=chunk_size, overlap=overlap)
 
     # 3. Compute cosine similarities between adjacent sentences
-    import math
-    def _cosine(a, b):
-        dot = sum(x*y for x, y in zip(a, b))
-        na = math.sqrt(sum(x*x for x in a))
-        nb = math.sqrt(sum(x*x for x in b))
-        return dot / (na * nb) if na and nb else 0.0
-
-    sims = [_cosine(all_embeddings[i], all_embeddings[i+1]) for i in range(len(all_embeddings)-1)]
+    sims = [_cosine_similarity(all_embeddings[i], all_embeddings[i+1]) for i in range(len(all_embeddings)-1)]
     if not sims:
         return [text]
 
@@ -1469,25 +1539,85 @@ def _extract_native_headers(text: str) -> list[tuple[int, int, str]]:
     return cleaned
 
 
-def _hybrid_split_chunks(text: str, chunk_size: int = 4500, overlap: int = 600) -> list[str]:
-    """Hybrid strategy: use native headers if present, else fall back to balanced text splitting."""
-    headers = _extract_native_headers(text)
-    if len(headers) >= 2:
-        logger.info(f"Hybrid split: found {len(headers)} native headers, using structure-based splitting")
-        chunks = []
-        for i, (start, end, title) in enumerate(headers):
-            if i + 1 < len(headers):
-                next_start = headers[i + 1][0]
-                section_text = text[start:next_start].strip()
-            else:
-                section_text = text[start:].strip()
-            if len(section_text) > 100:
-                chunks.append(section_text)
-        if chunks:
-            return chunks
+def _hybrid_split_chunks(text: str, chunk_size: int = 3500, overlap: int = 600) -> list[str]:
+    """Hybrid chunking: semantic topic detection + recursive paragraph alignment.
 
-    logger.info("Hybrid split: no native headers found, falling back to balanced splitting")
-    return _split_text_chunks(text, chunk_size=chunk_size, overlap=overlap)
+    Process:
+    1. Split text into paragraphs (same as recursive)
+    2. Embed each paragraph → detect topic shifts via cosine similarity
+    3. Form chunks at topic boundaries, but also respect chunk_size cap
+    4. Apply overlap for context continuity
+
+    This gives faithfulness of recursive (paragraph integrity) + coherence of
+    semantic (topic-aligned boundaries).
+    """
+    if len(text) <= chunk_size:
+        return [text]
+
+    # 1. Split into paragraphs (by double newline)
+    raw_paras = re.split(r'\n\s*\n', text)
+    paragraphs = [p.strip() for p in raw_paras if p.strip()]
+    if not paragraphs:
+        return [text]
+
+    # 2. Handle short texts with few paragraphs
+    if len(paragraphs) <= 2:
+        return _split_text_chunks(text, chunk_size=chunk_size, overlap=overlap)
+
+    # 3. Get paragraph embeddings
+    embs = _get_embeddings_batch(paragraphs, max_chars=300)
+    if not embs or len(embs) != len(paragraphs):
+        return _split_text_chunks(text, chunk_size=chunk_size, overlap=overlap)
+
+    # 4. Detect topic shifts: low similarity between consecutive paragraphs
+    sims = []
+    for i in range(len(embs) - 1):
+        sim = _cosine_similarity(embs[i], embs[i + 1])
+        sims.append(sim)
+
+    # Dynamic threshold: bottom 30th percentile, clamped to [0.3, 0.8]
+    sorted_sims = sorted(sims)
+    p30 = sorted_sims[max(0, int(len(sorted_sims) * 0.3))]
+    shift_threshold = max(0.3, min(0.8, p30))
+
+    # 5. Build chunks
+    para_lens = [len(p) for p in paragraphs]
+    chunks = []
+    chunk_start = 0
+    current_len = 0
+
+    for i in range(len(paragraphs)):
+        current_len += para_lens[i]
+        is_last = (i == len(paragraphs) - 1)
+        is_topic_shift = (i < len(sims) and sims[i] < shift_threshold)
+
+        # Decision: should we cut at this paragraph boundary?
+        should_cut = False
+        if is_last:
+            should_cut = True
+        elif current_len >= chunk_size:
+            # Past chunk_size: cut at this paragraph boundary.
+            # Bonus if also a topic shift → even cleaner boundary.
+            should_cut = True
+        elif current_len >= chunk_size * 1.3:
+            should_cut = True  # Hard safety cap
+
+        if should_cut:
+            # Build chunk from chunk_start to i (inclusive)
+            chunk_text = "\n\n".join(paragraphs[chunk_start:i + 1])
+            if chunk_text.strip():
+                chunks.append(chunk_text.strip())
+
+            # Next chunk starts here, but with overlap: include last paragraph
+            if not is_last:
+                overlap_start = max(chunk_start, i - 1)  # at least 1 paragraph overlap
+                chunk_start = overlap_start
+                current_len = sum(para_lens[overlap_start:i + 1])
+            else:
+                chunk_start = i + 1
+                current_len = 0
+
+    return chunks if chunks else [text]
 
 
 def _has_clear_structure(text: str) -> bool:
@@ -1503,7 +1633,7 @@ def _has_clear_structure(text: str) -> bool:
     return False
 
 
-def generate_structured_dialogue(clean_text: str, opening_text: str = "", model: str | None = None, duration: str | None = None, split_strategy: str = "original", prompt_mode: str = "original") -> tuple[list[dict], dict, int]:
+def generate_structured_dialogue(clean_text: str, opening_text: str = "", model: str | None = None, duration: str | None = None, split_strategy: str = "section", prompt_mode: str = "original") -> tuple[list[dict], dict, int, list[dict] | None]:
     t0 = time.time()
     length = len(clean_text)
 
@@ -1513,11 +1643,20 @@ def generate_structured_dialogue(clean_text: str, opening_text: str = "", model:
         logger.info(f"Auto-switched prompt_mode: {prompt_mode} -> {resolved_mode} for {length} chars")
         prompt_mode = resolved_mode
 
-    # Strategy selection: outline-first deprecated due to poor coverage (8% on 14k chars).
-    # All texts now use single-shot or fallback chunking for better fidelity.
-    use_outline = False
+    # Strategy selection: section for >4000 (default), single-shot for shorter texts.
     strategy = "single-shot" if length <= 4000 else "chunked-fallback"
     logger.info(f"Generation strategy: {strategy} for {length} chars (duration={duration}, split={split_strategy}, prompt={prompt_mode})")
+
+    # Phase 1: Section-based generation (Structure-first Hybrid RAG)
+    # Only for long texts (>4000 chars); short texts keep single-shot.
+    # Falls back to original chunking if section generation fails.
+    if split_strategy == "section" and length > 4000:
+        try:
+            from section_generator import generate_by_section as _section_gen
+            dialogue, scores, elapsed, section_meta = _section_gen(clean_text, model=model, duration=duration)
+            return dialogue, scores, elapsed, section_meta
+        except Exception as e:
+            logger.warning(f"Section generation failed ({e}), falling back to original chunking")
 
     if length <= 4000:
         # Single-shot for short texts
@@ -1529,7 +1668,7 @@ def generate_structured_dialogue(clean_text: str, opening_text: str = "", model:
                 if opening_text:
                     prompt = f"""原文如下：\n{clean_text}\n\n已有开场对话（请延续以下开场白的风格和节奏，从开场之后继续生成，不要重复开场内容）：\n{opening_text}\n\n请根据以上原文创作双人播客对话，从开场之后继续。要求：\n1. 正文对话的风格、节奏、语气应与开场白保持一致，避免风格突变\n2. 完整覆盖原文所有重要论点、关键数据和典型案例\n3. 句子自然流畅，允许使用专业术语\n4. 嘉宾提出问题和质疑，主持分析总结\n5. 输出格式：每行 "主持[情绪]：..." 或 "嘉宾[情绪]：..."\n6. 不要编号，不要多余内容\n7. 每行必须以 "主持[" 或 "嘉宾[" 开头，禁止叙述文或段落{_FORMAT_EXAMPLE}{f"\n8. {_duration_hint(duration)}" if duration and duration != "free" else ""}{"\n\n【重试——上一次的输出格式不正确，请务必严格按照上述示例格式输出。】" if attempt > 1 else ""}"""
                     system = _select_system_prompt(prompt_mode, is_first=True)
-                    raw = _call_ai(system, prompt, model=model, temperature=(0.2 if prompt_mode == "locked" else 0.7))
+                    raw = _call_ai(system, prompt, model=model, temperature=0.7)
                 else:
                     raw = _generate_single_dialogue(clean_text, model=model, duration=duration, format_retry=(attempt > 1), prompt_mode=prompt_mode)
                 dialogue = parse_dialogue(raw)
@@ -1583,7 +1722,7 @@ def generate_structured_dialogue(clean_text: str, opening_text: str = "", model:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
-        return dialogue, eval_scores, llm_time
+        return dialogue, eval_scores, llm_time, None
 
     # Long texts (>4000): use fallback chunking directly (outline-first deprecated)
     chunk_size = 3500  # Balanced: enough context per chunk, more chunks for better coverage
@@ -1689,7 +1828,7 @@ def generate_structured_dialogue(clean_text: str, opening_text: str = "", model:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
-    return all_dialogue, eval_scores, total_llm_time
+    return all_dialogue, eval_scores, total_llm_time, None
 
 # ── Utility: Fetch article ──
 
@@ -1945,6 +2084,32 @@ def _resolve_preset(settings: dict, section: str, preset_key: str) -> dict:
     return section_cfg
 
 
+def _compute_timings(script: list[dict], section_metadata: list[dict] | None = None) -> list[dict]:
+    """Estimate per-turn timestamps based on text length (~4 chars/sec).
+
+    Returns list of {turn_index, start, end, speaker, section_id}.
+    """
+    timings = []
+    acc = 0.0
+    for i, turn in enumerate(script):
+        dur = max(1.5, len(turn.get("text", "")) / 4.0)
+        section_id = None
+        if section_metadata:
+            for sec in section_metadata:
+                if sec["turn_start"] <= i < sec["turn_end"]:
+                    section_id = sec["section_id"]
+                    break
+        timings.append({
+            "turn_index": i,
+            "start": round(acc, 1),
+            "end": round(acc + dur, 1),
+            "speaker": turn.get("speaker", ""),
+            "section_id": section_id,
+        })
+        acc += dur
+    return timings
+
+
 def _generate_arranged_podcast(
     script: list[dict],
     settings: dict,
@@ -2112,6 +2277,54 @@ OPENING_SYSTEM = """你是一个播客开场白编剧。根据给定的话题，
 5. 输出格式：每行 "嘉宾：..." 或 "主持：..."
 6. 不要多余内容，不要标序号"""
 
+INTRO_VARIATIONS_SYSTEM = """你是一个播客开场白模板设计师。请为给定话题生成 {count} 种不同风格的开场白模板。
+
+每种开场白模板要求：
+1. **name**：简短的风格名称（2-6字），如"悬念式""数据震撼""故事引入"
+2. **template**：1-2句开场白文本，使用 `{topic}` 作为话题占位符
+3. **speaker**：开场发言人——"主持"或"嘉宾"或"双声"
+4. **transition_style**：过渡音乐风格——"warm"（温暖）、"cool"（冷静）、"micro"（轻快）、"minimal"（极简）
+5. **transition_duration**：过渡音乐时长（秒），2.0-5.0 之间
+6. **transition_volume**：过渡音乐音量，0.05-0.30 之间
+
+{count} 种风格要差异明显，覆盖不同的开场策略（如：悬念提问、数据震撼、场景带入、观点冲突、故事引入）。
+
+输出严格 JSON 数组（不要任何额外文字）：
+```json
+[
+  {
+    "name": "悬念式",
+    "template": "你有没有想过——{topic}？今天我们就来聊聊这个。",
+    "speaker": "嘉宾",
+    "transition_style": "micro",
+    "transition_duration": 3.0,
+    "transition_volume": 0.15
+  }
+]
+```"""
+
+OUTRO_VARIATIONS_SYSTEM = """你是一个播客片尾模板设计师。请为给定话题生成 {count} 种不同风格的片尾模板。
+
+每种片尾模板要求：
+1. **name**：简短的风格名称（2-6字），如"温情收尾""金句总结"
+2. **template**：1-2句片尾文本，可包含 `{topic}` 作为话题占位符
+3. **speaker**：发言人——"主持"或"嘉宾"
+4. **mode**：固定为 "template"
+
+{count} 种风格要差异明显，覆盖不同的收尾策略（如：总结式、启发式、温情式、行动号召、金句式）。
+
+输出严格 JSON 数组（不要任何额外文字）：
+```json
+[
+  {
+    "name": "总结式",
+    "template": "以上就是关于{topic}的全部内容。感谢收听播刻，我们下期再见。",
+    "speaker": "主持",
+    "mode": "template"
+  }
+]
+```"""
+
 
 def _session_get(session_id: str) -> dict | None:
     with _session_lock:
@@ -2166,7 +2379,7 @@ def generate_opening(topic: str) -> list[dict]:
     """Generate 2 turns of opening dialogue from just a topic string. Uses fast eval model."""
     t0 = time.time()
     prompt = f"话题：{topic}\n\n请为这个话题生成2轮精彩的开场对话。"
-    raw = _call_eval(OPENING_SYSTEM, prompt)
+    raw = _call_ai(OPENING_SYSTEM, prompt)
     logger.info(f"Opening generated ({int((time.time()-t0)*1000)}ms): {raw[:100]}")
     dialogue = parse_dialogue(raw)
     if len(dialogue) < 2:
@@ -2178,7 +2391,7 @@ def generate_opening(topic: str) -> list[dict]:
     return dialogue[:2]
 
 
-def _start_generation(url: str, text: str, duration: str, title: str | None = None, request_id: str | None = None, model: str | None = None, high_quality: bool = False, bg_music: bool = False, voice_map: dict | None = None, prompt_mode: str = "original") -> tuple[str, list[dict]]:
+def _start_generation(url: str, text: str, duration: str, title: str | None = None, request_id: str | None = None, model: str | None = None, high_quality: bool = False, bg_music: bool = False, voice_map: dict | None = None, prompt_mode: str = "original", intro_preset_id: str | None = None, outro_preset_id: str | None = None) -> tuple[str, list[dict]]:
     """Create session, generate opening script, and start background thread.
     Returns (session_id, opening_script)."""
     if not request_id:
@@ -2196,6 +2409,10 @@ def _start_generation(url: str, text: str, duration: str, title: str | None = No
     _session_set(session_id, "bg_music", bg_music)
     _session_set(session_id, "voice_map", voice_map)
     _session_set(session_id, "prompt_mode", prompt_mode)
+    if intro_preset_id:
+        _session_set(session_id, "intro_preset_id", intro_preset_id)
+    if outro_preset_id:
+        _session_set(session_id, "outro_preset_id", outro_preset_id)
 
     # A/B experiment assignment
     input_length = len(url or text)
@@ -2216,7 +2433,7 @@ def _start_generation(url: str, text: str, duration: str, title: str | None = No
 
     thread = threading.Thread(
         target=_background_full_generation,
-        args=(session_id, url, text, duration, opening_script, model, high_quality, bg_music),
+        args=(session_id, url, text, duration, opening_script, model, high_quality, bg_music, intro_preset_id, outro_preset_id),
         daemon=True,
     )
     thread.start()
@@ -2241,7 +2458,8 @@ def _build_continuation_prompt(opening_script: list[dict]) -> str:
 
 def _background_full_generation(session_id: str, url: str, text: str,
                                  duration: str, opening_script: list[dict],
-                                 model: str | None = None, high_quality: bool = False, bg_music: bool = False):
+                                 model: str | None = None, high_quality: bool = False, bg_music: bool = False,
+                                 intro_preset_id: str | None = None, outro_preset_id: str | None = None):
     """Full generation pipeline running in a background thread."""
     logger.info(f"[bg] Starting full generation for session {session_id}")
     try:
@@ -2276,10 +2494,16 @@ def _background_full_generation(session_id: str, url: str, text: str,
         opening_text = _build_continuation_prompt(opening_script)
 
         session_prompt_mode = (_session_get(session_id) or {}).get("prompt_mode", "original")
-        full_dialogue, eval_scores, llm_time = generate_structured_dialogue(
+        result = generate_structured_dialogue(
             clean_text, opening_text=opening_text, model=model, duration=duration, prompt_mode=session_prompt_mode
         )
+        if len(result) == 4:
+            full_dialogue, eval_scores, llm_time, section_metadata = result
+        else:
+            full_dialogue, eval_scores, llm_time = result
+            section_metadata = None
         _session_set(session_id, "llm_time_ms", llm_time)
+        _session_set(session_id, "section_metadata", section_metadata)
         _session_set(session_id, "progress", 70)
 
         if not full_dialogue:
@@ -2288,6 +2512,24 @@ def _background_full_generation(session_id: str, url: str, text: str,
 
         complete_dialogue = opening_script + full_dialogue
         _session_set(session_id, "full_script", complete_dialogue)
+
+        # Compute per-turn timestamps for chapter timeline
+        if section_metadata:
+            # Adjust section turn_start/turn_end to account for opening_script offset
+            offset = len(opening_script)
+            adjusted_metadata = []
+            for sec in section_metadata:
+                s = dict(sec)
+                s["turn_start"] = sec["turn_start"] + offset
+                s["turn_end"] = sec["turn_end"] + offset
+                adjusted_metadata.append(s)
+            timings = _compute_timings(complete_dialogue, adjusted_metadata)
+        else:
+            timings = _compute_timings(complete_dialogue)
+            adjusted_metadata = None
+        _session_set(session_id, "timings", timings)
+        if adjusted_metadata:
+            _session_set(session_id, "section_metadata", adjusted_metadata)
 
         # Store article title and content for recommendations
         _session_set(session_id, "article_title", title)
@@ -2303,6 +2545,10 @@ def _background_full_generation(session_id: str, url: str, text: str,
         voice_map = (_session_get(session_id) or {}).get("voice_map")
 
         settings = _load_settings()
+        if intro_preset_id:
+            settings["intro_preset_id"] = intro_preset_id
+        if outro_preset_id:
+            settings["outro_preset_id"] = outro_preset_id
         tmp_dir = Path(tempfile.mkdtemp(prefix="boke_arrange_"))
         final_path = _generate_arranged_podcast(
             full_dialogue, settings, voice_map=voice_map,
@@ -2369,6 +2615,8 @@ def api_generate_streaming():
     if voice_map and not isinstance(voice_map, dict):
         voice_map = None
     prompt_mode = data.get("prompt_mode", "auto")
+    intro_preset_id = data.get("intro_preset_id")
+    outro_preset_id = data.get("outro_preset_id")
     session_id = str(uuid.uuid4())
     t0 = time.time()
 
@@ -2378,7 +2626,7 @@ def api_generate_streaming():
         return jsonify({"error": "服务端未配置 API 密钥"}), 500
 
     try:
-        session_id, opening_script = _start_generation(url, text, duration, request_id=request_id, model=model, high_quality=high_quality, bg_music=bg_music, voice_map=voice_map, prompt_mode=prompt_mode)
+        session_id, opening_script = _start_generation(url, text, duration, request_id=request_id, model=model, high_quality=high_quality, bg_music=bg_music, voice_map=voice_map, prompt_mode=prompt_mode, intro_preset_id=intro_preset_id, outro_preset_id=outro_preset_id)
 
         # TTS opening (~2s)
         session = _session_get(session_id) or {}
@@ -2479,6 +2727,81 @@ def api_settings_reset():
     """Reset settings to defaults."""
     _save_settings(dict(_DEFAULT_SETTINGS))
     return jsonify({"status": "reset"})
+
+
+@app.route("/api/generate-intro-presets", methods=["POST"])
+def api_generate_intro_presets():
+    """Generate N variations of intro opening templates."""
+    data = request.get_json(force=True) or {}
+    topic = data.get("topic", "")
+    count = min(int(data.get("count", 3)), 5)
+    if not topic:
+        return jsonify({"error": "请提供 topic"}), 400
+
+    prompt = f"话题：{topic}\n\n请为这个话题生成 {count} 种不同风格的开场白模板。"
+    raw = _call_ai(INTRO_VARIATIONS_SYSTEM.format(count=count), prompt, temperature=0.8)
+    try:
+        json_match = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', raw, re.DOTALL)
+        if json_match:
+            presets = json.loads(json_match.group(1))
+        else:
+            presets = json.loads(raw)
+        if not isinstance(presets, list):
+            raise ValueError("not a list")
+        for p in presets:
+            p["id"] = f"intro_{uuid.uuid4().hex[:8]}"
+            p.setdefault("voice_id", None)
+        return jsonify({"presets": presets[:count]})
+    except Exception as e:
+        logger.warning(f"Failed to parse intro presets: {e}, raw: {raw[:200]}")
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 500
+
+
+@app.route("/api/generate-outro-presets", methods=["POST"])
+def api_generate_outro_presets():
+    """Generate N variations of outro/closing templates."""
+    data = request.get_json(force=True) or {}
+    topic = data.get("topic", "")
+    count = min(int(data.get("count", 3)), 5)
+    if not topic:
+        return jsonify({"error": "请提供 topic"}), 400
+
+    prompt = f"话题：{topic}\n\n请为这个话题生成 {count} 种不同风格的片尾模板。"
+    raw = _call_ai(OUTRO_VARIATIONS_SYSTEM.format(count=count), prompt, temperature=0.8)
+    try:
+        json_match = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', raw, re.DOTALL)
+        if json_match:
+            presets = json.loads(json_match.group(1))
+        else:
+            presets = json.loads(raw)
+        if not isinstance(presets, list):
+            raise ValueError("not a list")
+        for p in presets:
+            p["id"] = f"outro_{uuid.uuid4().hex[:8]}"
+            p.setdefault("voice_id", None)
+        return jsonify({"presets": presets[:count]})
+    except Exception as e:
+        logger.warning(f"Failed to parse outro presets: {e}, raw: {raw[:200]}")
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 500
+
+
+@app.route("/api/settings/presets", methods=["POST"])
+def api_settings_presets():
+    """Save AI-generated presets into settings (merge, dedup by ID)."""
+    data = request.get_json(force=True) or {}
+    current = _load_settings()
+    for section in ("intro", "outro"):
+        presets_key = f"{section}_presets"
+        new_presets = data.get(presets_key, [])
+        if not new_presets:
+            continue
+        existing_ids = {p["id"] for p in current.get(presets_key, []) if p.get("id")}
+        for p in new_presets:
+            if p.get("id") and p["id"] not in existing_ids:
+                current.setdefault(presets_key, []).append(p)
+                existing_ids.add(p["id"])
+    _save_settings(current)
+    return jsonify(current)
 
 
 @app.route("/api/upload_bgm", methods=["POST"])
@@ -2727,7 +3050,7 @@ def api_generate_script():
             if "model" in exp_config:
                 model = exp_config["model"]
 
-        dialogue, eval_scores, llm_time = generate_structured_dialogue(clean_text, model=model, duration=duration, prompt_mode=prompt_mode)
+        dialogue, eval_scores, llm_time, _section_meta = generate_structured_dialogue(clean_text, model=model, duration=duration, prompt_mode=prompt_mode)
         total_llm_ms = int((time.time() - t0) * 1000)
 
         has_speaker, format_valid = validate_dialogue_format(dialogue)
@@ -3029,7 +3352,7 @@ def api_explore():
 
 @app.route("/api/podcast/<session_id>/detail", methods=["GET"])
 def api_podcast_detail(session_id: str):
-    """Return podcast detail with script, chapters, and eval scores."""
+    """Return podcast detail with script, chapters, timings, and eval scores."""
     session = _session_get(session_id)
     if not session:
         return jsonify({"error": "Session not found"}), 404
@@ -3037,9 +3360,26 @@ def api_podcast_detail(session_id: str):
     title = session.get("title", "")
     article_title = session.get("article_title", "")
     eval_scores = session.get("eval_scores", {})
-    # Build simple chapter structure from script topics
+    section_metadata = session.get("section_metadata")
+    timings = session.get("timings")
+    # Build chapters from real section metadata or fall back to simple structure
     chapters = []
-    if full_script and len(full_script) > 4:
+    if section_metadata and len(section_metadata) > 1:
+        for sec in section_metadata:
+            start_time = 0
+            end_time = 0
+            if timings and sec["turn_start"] < len(timings):
+                start_time = timings[sec["turn_start"]]["start"]
+                end_time = timings[min(sec["turn_end"] - 1, len(timings) - 1)]["end"]
+            chapters.append({
+                "id": sec["section_id"],
+                "t": f"0{sec['section_id']} · {sec['title']}",
+                "d": sec.get("summary", ""),
+                "turns": f"{sec['turn_start']+1}-{sec['turn_end']}",
+                "start_time": start_time,
+                "end_time": end_time,
+            })
+    elif full_script and len(full_script) > 4:
         total_turns = len(full_script)
         chunk_size = max(1, total_turns // 3)
         chapter_names = [
@@ -3050,10 +3390,15 @@ def api_podcast_detail(session_id: str):
         for i, (cn, cd) in enumerate(chapter_names):
             start_turn = i * chunk_size
             end_turn = min((i + 1) * chunk_size, total_turns)
+            start_time = timings[start_turn]["start"] if timings and start_turn < len(timings) else 0
+            end_time = timings[end_turn - 1]["end"] if timings and end_turn - 1 < len(timings) else 0
             chapters.append({
+                "id": i + 1,
                 "t": f"0{i+1} · {cn}",
                 "d": cd,
                 "turns": f"{start_turn+1}-{end_turn}",
+                "start_time": start_time,
+                "end_time": end_time,
             })
     return jsonify({
         "session_id": session_id,
@@ -3062,6 +3407,7 @@ def api_podcast_detail(session_id: str):
         "progress": session.get("progress", 0),
         "script": full_script or [],
         "chapters": chapters,
+        "timings": timings or [],
         "eval_scores": eval_scores,
         "duration": session.get("duration", "standard"),
         "created_at": session.get("created_at", 0),
@@ -4409,6 +4755,15 @@ def _init_rag():
 
 _init_rag()
 _load_persisted_sessions()
+
+# ── SPA catch-all: serve index.html for any non-API, non-asset route ──
+@app.route("/<path:path>")
+def _spa_fallback(path):
+    # Only catch non-API, non-asset routes
+    if path.startswith("api/") or path.startswith("assets/"):
+        return jsonify({"error": "Not found"}), 404
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
 
 # ── Error Handlers (return JSON, not HTML, so Vite proxy doesn't choke) ──
 @app.errorhandler(400)

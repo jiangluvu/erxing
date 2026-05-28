@@ -77,13 +77,6 @@ export default function MonitorPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => setPage("home")}
-            className="flex items-center gap-2 text-xs text-slate-500 hover:text-white transition-colors"
-          >
-            <ArrowLeft size={14} />
-            返回
-          </button>
           <div>
             <h1 className="text-xl font-bold text-white">数据监控中心</h1>
             <p className="text-xs text-slate-500 mt-1">

@@ -18,7 +18,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { useAppStore } from "../store";
-import { generateTTS, getBGMs, reportUserAction } from "../api";
+import { generateTTS, getBGMs, reportUserAction, getAudioStreamUrl } from "../api";
 
 export default function ScriptEditorPage() {
   const setPage = useAppStore((s) => s.setPage);
@@ -31,6 +31,11 @@ export default function ScriptEditorPage() {
   const setFemaleVoiceId = useAppStore((s) => s.setFemaleVoiceId);
   const defaultEmotion = useAppStore((s) => s.defaultEmotion);
   const podcastSettings = useAppStore((s) => s.podcastSettings);
+  const drafts = useAppStore((s) => s.drafts);
+  const addDraft = useAppStore((s) => s.addDraft);
+  const updateDraft = useAppStore((s) => s.updateDraft);
+  const currentDraftId = useAppStore((s) => s.currentDraftId);
+  const setCurrentDraftId = useAppStore((s) => s.setCurrentDraftId);
   const [loading, setLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [rawText, setRawText] = useState("");
@@ -169,14 +174,26 @@ export default function ScriptEditorPage() {
 
     setLoading(true);
     try {
+      useAppStore.getState().setGenerationStatus("generating");
+      useAppStore.getState().setStatusText("正在合成语音…");
+      useAppStore.getState().setGenerationProgress(30);
       // Report edit_generate action
-      const sessionId = useAppStore.getState().sessionId;
+      const currentSessionId = useAppStore.getState().sessionId;
       reportUserAction({
-        session_id: sessionId,
+        session_id: currentSessionId,
         action_type: "edit_generate",
       });
       // Persist edited script
       setScriptData(validScript);
+      // Update or create draft
+      const draftTitle = validScript[0]?.text?.slice(0, 40) || "我的草稿";
+      if (currentDraftId) {
+        updateDraft(currentDraftId, { script: validScript, title: draftTitle });
+      } else {
+        const newId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
+        addDraft({ id: newId, title: draftTitle, script: validScript, created_at: Date.now(), updated_at: Date.now() });
+        setCurrentDraftId(newId);
+      }
       const voiceMap = { 主持: maleVoiceId, 嘉宾: femaleVoiceId };
       const payload = { script: validScript, voice_map: voiceMap };
       if (useCustomAudio) {
@@ -206,10 +223,22 @@ export default function ScriptEditorPage() {
         };
         payload.arrangement = arrangement;
       }
-      const { blob } = await generateTTS(payload);
-      const url = URL.createObjectURL(blob);
-      useAppStore.getState().setFullAudioUrl(url);
-      setPage("player");
+      const { sessionId } = await generateTTS(payload);
+      useAppStore.getState().setSessionId(sessionId);
+      useAppStore.getState().setFullAudioUrl(getAudioStreamUrl(sessionId));
+      useAppStore.getState().setCurrentPodcast({
+        title: "",
+        platform: "网页",
+        time: "刚刚",
+        sessionId: sessionId,
+      });
+      useAppStore.getState().setGenerationStatus("complete");
+      useAppStore.getState().setStatusText("播客已就绪");
+      useAppStore.getState().setPersistentNotif({
+        message: "播客合成成功",
+        actionLabel: "点击进入播放器",
+        actionPage: "player",
+      });
       showToast("播客生成成功！", "success");
     } catch (e) {
       showToast(e.message || "语音合成失败", "error");
@@ -227,14 +256,7 @@ export default function ScriptEditorPage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-10">
         <AlertCircle size={48} className="text-slate-600 mb-4" />
-        <p className="text-slate-500 mb-6">还没有生成文稿，请返回首页上传内容。</p>
-        <button
-          onClick={() => setPage("home")}
-          className="flex items-center gap-2 px-6 py-3 bg-white text-black rounded-xl text-sm font-bold hover:bg-white/90 transition-all"
-        >
-          <ArrowLeft size={16} />
-          返回首页
-        </button>
+        <p className="text-slate-500 mb-6">还没有生成文稿，请先创建播客。</p>
       </div>
     );
   }
@@ -247,13 +269,15 @@ export default function ScriptEditorPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => setPage("home")}
-            className="flex items-center gap-2 text-xs text-slate-500 hover:text-white transition-colors"
-          >
-            <ArrowLeft size={14} />
-            返回
-          </button>
+          {currentDraftId && (
+            <button
+              onClick={() => setPage("myDrafts")}
+              className="p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white transition-all"
+              title="返回草稿"
+            >
+              <ArrowLeft size={18} />
+            </button>
+          )}
           <div>
             <h1 className="text-xl font-bold text-white">文稿编辑</h1>
             <p className="text-xs text-slate-500 mt-1">

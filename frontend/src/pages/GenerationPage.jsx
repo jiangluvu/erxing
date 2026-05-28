@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   Loader2,
   Circle,
-  ArrowLeft,
   X,
   User,
 } from "lucide-react";
@@ -39,21 +38,11 @@ export default function GenerationPage() {
     setPage("home");
   };
 
-  const handleBack = () => {
-    setPage("home");
-  };
-
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-10">
       <div className="w-full max-w-lg">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <button
-            onClick={handleBack}
-            className="p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white transition-all"
-          >
-            <ArrowLeft size={18} />
-          </button>
+        <div className="flex items-center justify-end mb-8">
           <button
             onClick={handleCancel}
             className="p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-red-400 transition-all"

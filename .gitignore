@@ -30,3 +30,21 @@ backend/fish_verify.py
 backend/gen_ref_voices.py
 backend/generate_edge_podcast.py
 backend/tts_benchmark.py
+backend/ab_test*.py
+backend/benchmark_script.py
+backend/compare_*.py
+backend/debug_*.py
+backend/multi_article_validation.py
+
+# Runtime database & audio files
+backend/boke.db
+backend/recordings/
+backend/uploads/
+backend/data/
+backend/*.txt
+
+# Server logs
+server.log
+
+# Docs (design references, not part of the app)
+docs/

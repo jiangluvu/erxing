@@ -10,6 +10,9 @@ import {
   Clock,
   Heart,
   FileText,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import { useAppStore } from "../store";
 
@@ -37,7 +40,8 @@ export default function SideNavBar() {
 
   const navItems = [
     { id: "home", label: "新播客", icon: Sparkles },
-    { id: "myPodcasts", label: "我的播客", icon: Library, badge: String(genCount) },
+    { id: "myDrafts", label: "我的草稿", icon: FileText },
+    { id: "myPodcasts", label: "我的播客", icon: Library },
     { id: "workshop", label: "播客工坊", icon: Music },
     { id: "myTemplates", label: "我的模板", icon: FileText },
     { id: "myVoices", label: "我的声音", icon: Mic },
@@ -124,6 +128,9 @@ export default function SideNavBar() {
         </div>
       </div>
 
+      {/* Generation Progress */}
+      <GenerationProgress />
+
       <div className="p-4 border-t border-[#2a2a2a]">
         <button
           onClick={() => setPage("account")}
@@ -138,5 +145,43 @@ export default function SideNavBar() {
         </button>
       </div>
     </aside>
+  );
+}
+
+function GenerationProgress() {
+  const status = useAppStore((s) => s.generationStatus);
+  const progress = useAppStore((s) => s.generationProgress);
+  const statusText = useAppStore((s) => s.statusText);
+  const sessionId = useAppStore((s) => s.sessionId);
+  const setPage = useAppStore((s) => s.setPage);
+  const setGenerationStatus = useAppStore((s) => s.setGenerationStatus);
+
+  if (status === "idle") return null;
+
+  return (
+    <div className="px-4 py-3 border-t border-[#2a2a2a]">
+      <div
+        onClick={() => {
+          if (status === "complete" || status === "failed") {
+            setGenerationStatus("idle");
+          } else {
+            setPage("home");
+          }
+        }}
+        className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/5 cursor-pointer hover:bg-white/10 transition-all"
+      >
+        {status === "generating" && <Loader2 size={14} className="animate-spin text-brand-pink" />}
+        {status === "complete" && <CheckCircle2 size={14} className="text-green-500" />}
+        {status === "failed" && <AlertCircle size={14} className="text-red-500" />}
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] text-slate-400 truncate">{statusText || "生成中…"}</div>
+          {status === "generating" && (
+            <div className="mt-1 h-1 bg-[#2a2a2a] rounded-full overflow-hidden">
+              <div className="h-full bg-brand-pink rounded-full transition-all" style={{ width: `${Math.max(2, progress)}%` }} />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

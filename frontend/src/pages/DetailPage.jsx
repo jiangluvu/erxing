@@ -135,15 +135,6 @@ export default function DetailPage() {
 
   return (
     <div className="p-10 max-w-3xl mx-auto">
-      {/* Breadcrumb */}
-      <button
-        onClick={() => setPage("myPodcasts")}
-        className="flex items-center gap-2 text-xs text-slate-500 hover:text-white transition-colors mb-6"
-      >
-        <ArrowLeft size={14} />
-        <span>返回</span>
-      </button>
-
       {/* Title */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white mb-2">{title}</h1>

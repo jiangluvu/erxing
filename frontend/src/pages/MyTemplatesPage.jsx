@@ -149,13 +149,6 @@ export default function MyTemplatesPage() {
 
       {/* Header */}
       <div className="flex items-center gap-4 mb-8">
-        <button
-          onClick={() => setPage("home")}
-          className="flex items-center gap-2 text-xs text-slate-500 hover:text-white transition-colors"
-        >
-          <ArrowLeft size={14} />
-          返回
-        </button>
         <div>
           <h1 className="text-2xl font-bold text-white">我的模板</h1>
           <p className="text-sm text-slate-500 mt-1">管理已保存的开场白和片尾模板</p>

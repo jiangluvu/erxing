@@ -30,13 +30,6 @@ export default function AccountPage() {
   return (
     <div className="p-10 max-w-2xl mx-auto">
       <div className="flex items-center gap-4 mb-8">
-        <button
-          onClick={() => setPage("home")}
-          className="flex items-center gap-2 text-xs text-slate-500 hover:text-white transition-colors"
-        >
-          <ArrowLeft size={14} />
-          返回
-        </button>
         <div>
           <h1 className="text-2xl font-bold text-white">账号信息</h1>
           <p className="text-sm text-slate-500 mt-1">管理你的账号与数据</p>

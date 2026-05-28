@@ -23,13 +23,6 @@ export default function UsageStatsPage() {
   return (
     <div className="p-10 max-w-2xl mx-auto">
       <div className="flex items-center gap-4 mb-8">
-        <button
-          onClick={() => setPage("settings")}
-          className="flex items-center gap-2 text-xs text-slate-500 hover:text-white transition-colors"
-        >
-          <ArrowLeft size={14} />
-          返回设置
-        </button>
         <div>
           <h1 className="text-2xl font-bold text-white">API 用量</h1>
           <p className="text-sm text-slate-500 mt-1">近 {days} 天的 API 调用统计</p>

@@ -269,13 +269,6 @@ export default function WorkshopPage() {
 
       {/* Header */}
       <div className="flex items-center gap-4 mb-8">
-        <button
-          onClick={() => setPage("home")}
-          className="flex items-center gap-2 text-xs text-slate-500 hover:text-white transition-colors"
-        >
-          <ArrowLeft size={14} />
-          返回
-        </button>
         <div>
           <h1 className="text-2xl font-bold text-white">播客工坊</h1>
           <p className="text-sm text-slate-500 mt-1">生成并试听开场白 / 片尾，管理包装设置</p>

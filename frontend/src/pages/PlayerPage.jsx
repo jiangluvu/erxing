@@ -1,8 +1,7 @@
 import { useRef, useCallback, useState, useEffect } from "react";
 import { useAppStore } from "../store";
 import { usePlayer } from "../hooks/usePlayer";
-import { useGeneration } from "../hooks/useGeneration";
-import { addFavorite, downloadPodcast, reportUserAction, getPodcastDetail } from "../api";
+import { addFavorite, downloadPodcast, reportUserAction, getPodcastDetail, getAudioStreamUrl } from "../api";
 import {
   ArrowLeft,
   Heart,
@@ -15,7 +14,6 @@ import {
   FastForward,
   SkipForward,
   User,
-  Sparkles,
 } from "lucide-react";
 
 function formatTime(s) {
@@ -40,17 +38,15 @@ export default function PlayerPage() {
   const timings = useAppStore((s) => s.timings);
 
   const { togglePlay, seek, seekRelative } = usePlayer();
-  const { startGeneration } = useGeneration();
   const progressRef = useRef(null);
   const [favorited, setFavorited] = useState(false);
   const replayReportedRef = useRef(false);
 
   const fullAudioUrl = useAppStore((s) => s.fullAudioUrl);
   const previewAudioUrl = useAppStore((s) => s.previewAudioUrl);
-  const selectedModel = useAppStore((s) => s.selectedModel);
-  const selectedDuration = useAppStore((s) => s.selectedDuration);
-  const highQuality = useAppStore((s) => s.highQuality);
-  const bgMusic = useAppStore((s) => s.bgMusic);
+  const setFullAudioUrl = useAppStore((s) => s.setFullAudioUrl);
+  const setScriptData = useAppStore((s) => s.setScriptData);
+  const setTimings = useAppStore((s) => s.setTimings);
   const hasAudio = fullAudioUrl || previewAudioUrl;
 
   // Report replay when existing full podcast is played again
@@ -76,29 +72,22 @@ export default function PlayerPage() {
       .catch(() => {});
   }, [sessionId, setChapters]);
 
-  const handleGenerateFromPlayer = async () => {
-    const topic = currentPodcast?.title || "";
-    if (!topic) return;
-    // Report regenerate action
-    reportUserAction({
-      session_id: sessionId,
-      action_type: "regenerate",
-      article_title: topic,
-    });
-    const payload = {
-      text: topic,
-      model: selectedModel,
-      duration: selectedDuration,
-      high_quality: highQuality,
-      bg_music: bgMusic,
-    };
-    try {
-      await startGeneration(payload);
-      setPage("generation");
-    } catch (e) {
-      showToast(e.message || "生成失败", "error");
+  // Recover audio + script from backend on mount or sessionId change
+  useEffect(() => {
+    if (!sessionId) return;
+    // Use streaming URL directly — no blob download needed
+    if (!fullAudioUrl && !previewAudioUrl) {
+      setFullAudioUrl(getAudioStreamUrl(sessionId));
     }
-  };
+    // Always fetch script/chapters on sessionId change (handles MyPodcastsPage → Player)
+    getPodcastDetail(sessionId)
+      .then((data) => {
+        if (data.script) setScriptData(data.script);
+        if (data.timings) setTimings(data.timings);
+        if (data.chapters) setChapters(data.chapters);
+      })
+      .catch(() => {});
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [downloading, setDownloading] = useState(false);
 
@@ -173,7 +162,7 @@ export default function PlayerPage() {
       {/* Top Bar */}
       <div className="flex items-center gap-4 px-8 py-4 border-b border-[#2a2a2a] flex-shrink-0">
         <button
-          onClick={() => setPage("home")}
+          onClick={() => setPage("myPodcasts")}
           className="p-2 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white transition-all"
         >
           <ArrowLeft size={18} />
@@ -380,15 +369,7 @@ export default function PlayerPage() {
                   <FastForward size={20} />
                 </button>
               </div>
-            ) : (
-              <button
-                onClick={handleGenerateFromPlayer}
-                className="group relative flex items-center gap-3 px-10 py-3.5 bg-white hover:bg-white/90 text-black rounded-full font-bold text-base transition-all active:scale-95 shadow-[0_0_40px_rgba(255,255,255,0.1)]"
-              >
-                <Sparkles size={18} />
-                <span>生成完整播客</span>
-              </button>
-            )}
+            ) : null}
           </div>
         </div>
 

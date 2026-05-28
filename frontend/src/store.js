@@ -5,15 +5,30 @@ export const useAppStore = create((set, get) => ({
   currentPage: "home",
   setPage: (page) => set({ currentPage: page }),
 
-  // Generation state
-  sessionId: null,
-  setSessionId: (id) => set({ sessionId: id }),
-  generationProgress: 0,
-  setGenerationProgress: (p) => set({ generationProgress: p }),
-  generationStatus: "idle", // idle | generating | complete | failed
-  setGenerationStatus: (s) => set({ generationStatus: s }),
-  statusText: "",
-  setStatusText: (t) => set({ statusText: t }),
+  // Generation state (persisted to localStorage for session recovery)
+  sessionId: (typeof window !== "undefined" ? localStorage.getItem("boke_session_id") : null) || null,
+  setSessionId: (id) => {
+    if (typeof window !== "undefined") {
+      if (id) localStorage.setItem("boke_session_id", id);
+      else localStorage.removeItem("boke_session_id");
+    }
+    set({ sessionId: id });
+  },
+  generationProgress: typeof window !== "undefined" ? Number(localStorage.getItem("boke_gen_progress") || 0) : 0,
+  setGenerationProgress: (p) => {
+    if (typeof window !== "undefined") localStorage.setItem("boke_gen_progress", String(p));
+    set({ generationProgress: p });
+  },
+  generationStatus: (typeof window !== "undefined" ? localStorage.getItem("boke_gen_status") : null) || "idle",
+  setGenerationStatus: (s) => {
+    if (typeof window !== "undefined") localStorage.setItem("boke_gen_status", s);
+    set({ generationStatus: s });
+  },
+  statusText: (typeof window !== "undefined" ? localStorage.getItem("boke_gen_statustext") : null) || "",
+  setStatusText: (t) => {
+    if (typeof window !== "undefined") localStorage.setItem("boke_gen_statustext", t);
+    set({ statusText: t });
+  },
   previewAudioUrl: null,
   setPreviewAudioUrl: (url) => set({ previewAudioUrl: url }),
   fullAudioUrl: null,
@@ -32,8 +47,22 @@ export const useAppStore = create((set, get) => ({
   // Podcast data
   currentPodcast: null,
   setCurrentPodcast: (p) => set({ currentPodcast: p }),
-  scriptData: null,
-  setScriptData: (d) => set({ scriptData: d }),
+  scriptData: (() => {
+    if (typeof window !== "undefined") {
+      try {
+        const v = localStorage.getItem("boke_script_data");
+        return v ? JSON.parse(v) : null;
+      } catch { return null; }
+    }
+    return null;
+  })(),
+  setScriptData: (d) => {
+    if (typeof window !== "undefined") {
+      if (d) localStorage.setItem("boke_script_data", JSON.stringify(d));
+      else localStorage.removeItem("boke_script_data");
+    }
+    set({ scriptData: d });
+  },
   timings: [],
   setTimings: (t) => set({ timings: t }),
 
@@ -108,6 +137,35 @@ export const useAppStore = create((set, get) => ({
       return { customEmotions: next };
     }),
 
+  // Drafts (auto-saved scripts)
+  drafts: JSON.parse(
+    typeof window !== "undefined"
+      ? localStorage.getItem("boke_drafts") || "[]"
+      : "[]"
+  ),
+  addDraft: (draft) =>
+    set((state) => {
+      const next = [draft, ...state.drafts];
+      localStorage.setItem("boke_drafts", JSON.stringify(next));
+      return { drafts: next };
+    }),
+  updateDraft: (id, updates) =>
+    set((state) => {
+      const next = state.drafts.map((d) =>
+        d.id === id ? { ...d, ...updates, updated_at: Date.now() } : d
+      );
+      localStorage.setItem("boke_drafts", JSON.stringify(next));
+      return { drafts: next };
+    }),
+  deleteDraft: (id) =>
+    set((state) => {
+      const next = state.drafts.filter((d) => d.id !== id);
+      localStorage.setItem("boke_drafts", JSON.stringify(next));
+      return { drafts: next };
+    }),
+  currentDraftId: null,
+  setCurrentDraftId: (id) => set({ currentDraftId: id }),
+
   // Global podcast settings (intro / outro / body bgm)
   podcastSettings: JSON.parse(
     typeof window !== "undefined"
@@ -138,6 +196,18 @@ export const useAppStore = create((set, get) => ({
   toast: null,
   showToast: (message, type = "info") => set({ toast: { message, type } }),
   clearToast: () => set({ toast: null }),
+
+  // Persistent notification (bottom-left, no auto-dismiss)
+  persistentNotif: null,
+  setPersistentNotif: (n) => set({ persistentNotif: n }),
+  clearPersistentNotif: () => set({ persistentNotif: null }),
+
+  // Persisted input text for ZeroStatePage recovery
+  savedInputText: (typeof window !== "undefined" ? localStorage.getItem("boke_input_text") : null) || "",
+  setSavedInputText: (t) => {
+    if (typeof window !== "undefined") localStorage.setItem("boke_input_text", t);
+    set({ savedInputText: t });
+  },
 
   // Selected intro/outro presets for current generation
   selectedIntroPresetId: null,

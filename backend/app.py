@@ -11,6 +11,11 @@ from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import anthropic
+from database import (
+    init_db, migrate_from_json,
+    session_create, session_get, session_set, session_list, session_delete,
+    settings_load, settings_save, save_audio_file, get_audio_path,
+)
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
@@ -127,13 +132,8 @@ def _record_usage(model: str, prompt_tokens: int, completion_tokens: int, durati
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 def _resolve_model(model_key: str) -> str:
-    """Resolve a model key to actual model ID. Supports legacy shorthand keys."""
-    legacy_map = {"deepseek": "deepseek-v4-pro", "kimi": "deepseek-v4-flash", "gpt4o": "gpt-4o"}
-    if model_key in legacy_map:
-        return legacy_map[model_key]
-    if model_key in MODEL_MAP:
-        return model_key
-    return "deepseek-v4-pro"  # default fallback
+    """Temporarily force deepseek-v4-flash for all requests regardless of user selection."""
+    return "deepseek-v4-flash"
 
 FETCH_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -205,24 +205,28 @@ _DEFAULT_SETTINGS = {
 }
 
 def _load_settings() -> dict:
-    if not SETTINGS_PATH.exists():
-        return dict(_DEFAULT_SETTINGS)
-    try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        # Merge with defaults for missing keys
+    """Load settings from SQLite, with JSON file fallback for migration."""
+    db_data = settings_load()
+    if db_data:
+        # db_data is already a merged dict from SQLite key-value store
         merged = dict(_DEFAULT_SETTINGS)
-        _deep_update(merged, data)
+        _deep_update(merged, db_data)
         return merged
-    except Exception:
-        return dict(_DEFAULT_SETTINGS)
+    # Fallback to JSON file
+    if SETTINGS_PATH.exists():
+        try:
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            merged = dict(_DEFAULT_SETTINGS)
+            _deep_update(merged, data)
+            return merged
+        except Exception:
+            pass
+    return dict(_DEFAULT_SETTINGS)
 
 def _save_settings(data: dict):
-    try:
-        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.warning(f"Failed to save settings: {e}")
+    """Save settings to SQLite."""
+    settings_save(data)
 
 def _deep_update(base: dict, override: dict):
     for k, v in override.items():
@@ -433,7 +437,12 @@ def _call_ai(system: str, content: str, model: str | None = None, temperature: f
             data = resp.json()
         except Exception as e:
             body_preview = resp.text[:300] if resp.text else "(空响应)"
-            last_error = f"API 返回非 JSON 响应（模型={model_name}）：{e}。原文：{body_preview}"
+            # 检测空响应——通常是 API 网关拦截请求（余额不足/密钥无效）
+            if not resp.text or len(resp.text.strip()) == 0:
+                last_error = (f"AI 服务返回空响应（HTTP 200），可能原因：API 密钥余额不足或已过期。"
+                              f"请检查 ZHI_API_KEY 账户余额（模型={model_name}）")
+            else:
+                last_error = f"API 返回非 JSON 响应（模型={model_name}）：{e}。原文：{body_preview}"
             logger.error(last_error)
             _time.sleep(2 ** attempt)
             continue
@@ -1835,14 +1844,16 @@ def generate_structured_dialogue(clean_text: str, opening_text: str = "", model:
 def fetch_article(url: str) -> tuple[str, str]:
     logger.info(f"Fetching: {url}")
     try:
-        resp = requests.get(url, headers=FETCH_HEADERS, timeout=10)
+        resp = requests.get(url, headers=FETCH_HEADERS, timeout=15)
         resp.raise_for_status()
     except requests.Timeout:
         raise ValueError("请求超时")
     except requests.ConnectionError:
         raise ValueError("无法连接目标网站")
     except requests.HTTPError as e:
-        raise ValueError(f"HTTP {e.response.status_code}" if e.response.status_code != 403 else "目标网站拒绝访问")
+        if e.response.status_code == 403:
+            raise ValueError("该链接无法访问（网站限制了自动抓取），请尝试使用「文本」模式手动粘贴内容")
+        raise ValueError(f"HTTP {e.response.status_code}")
     except requests.RequestException as e:
         raise ValueError(f"请求失败: {str(e)[:100]}")
 
@@ -1851,14 +1862,68 @@ def fetch_article(url: str) -> tuple[str, str]:
     if len(html) < 200:
         raise ValueError("网页内容过短")
 
-    doc = Document(html)
-    title = doc.title() or ""
-    soup = BeautifulSoup(doc.summary(), "html.parser")
-    for tag in soup(["script", "style", "nav", "footer", "aside"]):
-        tag.decompose()
-    body = soup.get_text(separator="\n", strip=True)
+    title, body = "", ""
+
+    # Strategy 1: readability-lxml (fast, works on most blogs/articles)
+    try:
+        doc = Document(html)
+        title = doc.title() or ""
+        soup = BeautifulSoup(doc.summary(), "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "aside"]):
+            tag.decompose()
+        body = soup.get_text(separator="\n", strip=True)
+    except Exception:
+        pass
+
+    # Strategy 2: trafilatura (handles more sites, better at extracting structured content)
     if len(body) < 50:
-        raise ValueError("未能提取有效正文")
+        try:
+            import trafilatura
+            extracted = trafilatura.extract(html, include_tables=False, include_images=False,
+                                            include_links=False, favor_precision=True,
+                                            no_fallback=False)
+            if extracted and len(extracted) > len(body):
+                body = extracted.strip()
+            if not title:
+                t = trafilatura.extract(html, output_format="json", favor_precision=True)
+                if t:
+                    import json
+                    meta = json.loads(t)
+                    title = meta.get("title", "") or ""
+        except Exception:
+            pass
+
+    # Strategy 3: meta tags fallback (works on JS-rendered sites with og tags)
+    if len(body) < 50:
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            if not title:
+                for mt in [soup.find("meta", property="og:title"),
+                           soup.find("meta", attrs={"name": "twitter:title"}),
+                           soup.find("h1")]:
+                    if mt:
+                        t = mt.get("content", "") if mt.name == "meta" else mt.get_text(strip=True)
+                        if t:
+                            title = t
+                            break
+            for mt in [soup.find("meta", property="og:description"),
+                       soup.find("meta", attrs={"name": "description"}),
+                       soup.find("meta", attrs={"name": "twitter:description"})]:
+                if mt and mt.get("content"):
+                    body = mt["content"].strip()
+                    break
+            # Also try <article> tag and common content classes
+            if len(body) < 50:
+                article = soup.find("article")
+                if article:
+                    for tag in article(["script", "style", "nav", "footer", "aside"]):
+                        tag.decompose()
+                    body = article.get_text(separator="\n", strip=True)
+        except Exception:
+            pass
+
+    if len(body) < 50:
+        raise ValueError("未能提取有效正文，请检查链接是否正确，或尝试使用「文本」模式手动粘贴内容")
     return title.strip(), body
 
 # ── TTS ──
@@ -2223,45 +2288,19 @@ def _generate_arranged_podcast(
 
 # ── TTFA Streaming Generation ──
 
-SESSION_TIMEOUT = 1800  # 30 minutes
-SESSION_CLEANUP_INTERVAL = 300  # 5 minutes
+# ── Session Storage (uses SQLite via database.py) ──
 
-_sessions: dict[str, dict] = {}
-_session_lock = threading.RLock()
+def _session_create(session_id: str, request_id: str, duration: str, title: str) -> dict:
+    return session_create(session_id, request_id, duration, title)
 
-SESSIONS_PATH = BASE_DIR / "sessions.json"
+def _session_get(session_id: str) -> dict | None:
+    return session_get(session_id)
 
-# ── Session Persistence (survives restarts) ──
+def _session_set(session_id: str, key: str, value):
+    session_set(session_id, key, value)
 
-def _persist_sessions():
-    """Save all sessions to disk (excluding temp audio paths)."""
-    with _session_lock:
-        snapshot = {}
-        for sid, s in _sessions.items():
-            snapshot[sid] = {
-                k: v for k, v in s.items()
-                if k not in ("opening_audio_path", "full_audio_path")
-            }
-    try:
-        with open(SESSIONS_PATH, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.warning(f"Failed to persist sessions: {e}")
-
-def _load_persisted_sessions():
-    """Load sessions from disk at startup."""
-    global _sessions
-    if not SESSIONS_PATH.exists():
-        return
-    try:
-        with open(SESSIONS_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            with _session_lock:
-                _sessions = data
-            logger.info(f"Loaded {len(data)} persisted sessions")
-    except Exception as e:
-        logger.warning(f"Failed to load persisted sessions: {e}")
+def _session_delete(session_id: str):
+    session_delete(session_id)
 
 OPENING_SYSTEM = """你是一个播客开场白编剧。根据给定的话题，生成一段双人播客的精彩开场。
 
@@ -2324,41 +2363,6 @@ OUTRO_VARIATIONS_SYSTEM = """你是一个播客片尾模板设计师。请为给
   }
 ]
 ```"""
-
-
-def _session_get(session_id: str) -> dict | None:
-    with _session_lock:
-        return _sessions.get(session_id)
-
-
-def _session_set(session_id: str, key: str, value):
-    with _session_lock:
-        if session_id in _sessions:
-            _sessions[session_id][key] = value
-
-
-def _session_create(session_id: str, request_id: str, duration: str, title: str) -> dict:
-    with _session_lock:
-        session = {
-            "status": "generating_opening",
-            "progress": 0,
-            "error": None,
-            "opening_audio_path": None,
-            "full_audio_path": None,
-            "opening_script": None,
-            "full_script": None,
-            "title": title,
-            "duration": duration,
-            "request_id": request_id,
-            "created_at": time.time(),
-            "parse_time_ms": None,
-            "llm_time_ms": None,
-            "tts_time_ms": None,
-            "eval_scores": None,
-        }
-        _sessions[session_id] = session
-        _persist_sessions()
-        return session
 
 
 def _quick_title(url: str) -> str:
@@ -2557,6 +2561,8 @@ def _background_full_generation(session_id: str, url: str, text: str,
 
         tts_ms = int((time.time() - t2) * 1000)
         _session_set(session_id, "tts_time_ms", tts_ms)
+        # Persist audio to stable recordings/ directory
+        final_path = save_audio_file(final_path, session_id)
         _session_set(session_id, "full_audio_path", final_path)
         _session_set(session_id, "status", "complete")
         _session_set(session_id, "progress", 100)
@@ -2576,27 +2582,28 @@ def _background_full_generation(session_id: str, url: str, text: str,
         _session_set(session_id, "status", "failed")
         _session_set(session_id, "error", str(e)[:200])
         _session_set(session_id, "progress", 0)
-    finally:
-        _persist_sessions()
 
 
 def _session_cleanup_loop():
-    """Daemon thread: remove stale sessions every 5 minutes."""
+    """Daemon thread: remove stale sessions every 30 minutes."""
     while True:
-        time.sleep(SESSION_CLEANUP_INTERVAL)
-        now = time.time()
-        stale_ids = []
-        with _session_lock:
-            for sid, s in list(_sessions.items()):
-                if now - s.get("created_at", 0) > SESSION_TIMEOUT:
-                    stale_ids.append(sid)
-                    for pk in ("opening_audio_path", "full_audio_path"):
-                        p = s.get(pk)
-                        if p and Path(p).parent.exists():
-                            shutil.rmtree(Path(p).parent, ignore_errors=True)
-                    del _sessions[sid]
-        if stale_ids:
-            logger.info(f"Cleaned {len(stale_ids)} stale sessions")
+        time.sleep(1800)
+        try:
+            now = time.time()
+            all_sessions = session_list()
+            for s in all_sessions:
+                if now - s.get("created_at", 0) > 86400:  # 24h timeout
+                    session_delete(s.get("id", ""))
+                    audio_path = s.get("full_audio_path")
+                    if audio_path:
+                        try:
+                            p = Path(audio_path)
+                            if p.exists():
+                                p.unlink()
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning(f"Session cleanup error: {e}")
 
 # ── Routes ──
 
@@ -2655,7 +2662,10 @@ def api_generate_streaming():
 
     except Exception as e:
         logger.error(f"generate_streaming failed: {e}", exc_info=True)
-        return jsonify({"error": str(e)[:200]}), 500
+        err_msg = str(e)[:200]
+        if "空响应" in err_msg or "余额" in err_msg:
+            err_msg = "AI 服务异常（可能是账户余额不足），请检查 API 密钥配置或联系客服充值"
+        return jsonify({"error": err_msg}), 500
 
 
 @app.route("/api/generation_status/<session_id>", methods=["GET"])
@@ -2690,23 +2700,16 @@ def api_download_podcast(session_id: str):
     if session["status"] == "failed":
         return jsonify({"error": session.get("error", "生成失败"), "status": "failed"}), 500
 
-    audio_path = session.get("full_audio_path")
-    if not audio_path or not Path(audio_path).exists():
+    audio_path = get_audio_path(session_id)
+    if not audio_path:
         return jsonify({"error": "音频文件不存在"}), 404
 
     total_ms = (session.get("parse_time_ms", 0) +
                 session.get("llm_time_ms", 0) +
                 session.get("tts_time_ms", 0))
 
-    resp = send_file(audio_path, mimetype="audio/mpeg", as_attachment=True,
-                     download_name="podcast.mp3")
+    resp = send_file(audio_path, mimetype="audio/mpeg")
     resp.headers["X-Total-Ms"] = str(total_ms)
-
-    @resp.call_on_close
-    def cleanup_full():
-        p = _session_get(session_id)
-        if p:
-            p["full_audio_path"] = None
 
     return resp
 
@@ -3081,7 +3084,10 @@ def api_generate_script():
             "request_id": request_id, "phase": "generate_script",
             "success": False, "error_message": str(e)[:200],
         })
-        return jsonify({"error": str(e)[:200]}), 500
+        err_msg = str(e)[:200]
+        if "空响应" in err_msg or "余额" in err_msg:
+            err_msg = "AI 服务异常（可能是账户余额不足），请检查 API 密钥配置或联系客服充值"
+        return jsonify({"error": err_msg}), 500
 
 
 @app.route("/api/parse_script", methods=["POST"])
@@ -3218,6 +3224,16 @@ def api_tts():
 
     arrangement = data.get("arrangement")
     title = data.get("title", "")
+
+    # ── Create a session so this podcast appears in "我的播客" ──
+    session_id = str(uuid.uuid4())
+    duration = data.get("duration", "free")
+    _session_create(session_id, request_id, duration, title)
+    _session_set(session_id, "full_script", script)
+    _session_set(session_id, "voice_map", voice_map)
+    _session_set(session_id, "platform", "网页")
+    _session_set(session_id, "progress", 50)
+
     t0 = time.time()
     try:
         if arrangement:
@@ -3231,6 +3247,17 @@ def api_tts():
         tts_ms = int((time.time() - t0) * 1000)
         total_ms = parse_time_ms + llm_time_ms + tts_ms
 
+        # Persist audio — copy to recordings/ stable directory
+        audio_path = save_audio_file(audio_path, session_id)
+
+        _session_set(session_id, "full_audio_path", audio_path)
+        _session_set(session_id, "tts_time_ms", tts_ms)
+        _session_set(session_id, "status", "complete")
+        _session_set(session_id, "progress", 100)
+        # Compute per-turn timings for chapter markers & transcript sync
+        timings = _compute_timings(script)
+        _session_set(session_id, "timings", timings)
+
         write_log({
             "request_id": request_id, "phase": "tts",
             "input_type": input_type, "input_length": input_length,
@@ -3239,16 +3266,13 @@ def api_tts():
             "output_length": output_length,
             "success": True, "error_message": None,
             "has_speaker_format": has_speaker, "format_valid": format_valid,
+            "session_id": session_id,
             **eval_scores,
             "reuse_flag": 0, "full_play_flag": 0,
         })
 
-        resp = send_file(audio_path, mimetype="audio/mpeg", as_attachment=True,
-                         download_name="podcast.mp3")
-
-        @resp.call_on_close
-        def cleanup():
-            shutil.rmtree(Path(audio_path).parent, ignore_errors=True)
+        resp = send_file(audio_path, mimetype="audio/mpeg")
+        resp.headers["X-Session-Id"] = session_id
         return resp
     except Exception as e:
         logger.error(f"TTS failed: {e}", exc_info=True)
@@ -3417,22 +3441,18 @@ def api_podcast_detail(session_id: str):
 @app.route("/api/podcasts", methods=["GET"])
 def api_podcasts():
     """Return list of all completed podcasts."""
-    with _session_lock:
-        items = []
-        for sid, s in _sessions.items():
-            status = s.get("status", "")
-            if status not in ("complete", "failed"):
-                continue
-            items.append({
-                "id": sid,
-                "title": s.get("title", ""),
-                "article_title": s.get("article_title", ""),
-                "status": status,
-                "duration": s.get("duration", "standard"),
-                "created_at": s.get("created_at", 0),
-                "eval_scores": s.get("eval_scores", {}),
-                "platform": s.get("platform", "网页"),
-            })
+    items = []
+    for s in session_list(("complete", "failed")):
+        items.append({
+            "id": s.get("id", ""),
+            "title": s.get("title", ""),
+            "article_title": s.get("article_title", ""),
+            "status": s.get("status", ""),
+            "duration": s.get("duration", "standard"),
+            "created_at": s.get("created_at", 0),
+            "eval_scores": s.get("eval_scores", {}),
+            "platform": s.get("platform", "网页"),
+        })
     items.sort(key=lambda x: x["created_at"], reverse=True)
     return jsonify({"podcasts": items})
 
@@ -4754,7 +4774,8 @@ def _init_rag():
         logger.warning(f"RAG init failed: {e}")
 
 _init_rag()
-_load_persisted_sessions()
+init_db()
+migrate_from_json()
 
 # ── SPA catch-all: serve index.html for any non-API, non-asset route ──
 @app.route("/<path:path>")

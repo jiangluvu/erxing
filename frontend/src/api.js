@@ -120,8 +120,9 @@ export async function generateTTS(payload) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || "语音合成失败");
   }
+  const sessionId = res.headers.get("X-Session-Id");
   const blob = await res.blob();
-  return { blob };
+  return { blob, sessionId };
 }
 
 // ============ DRAFT ============
@@ -362,4 +363,10 @@ export function saveSettingsPresets(presets) {
 
 export function getPodcastDetail(sessionId) {
   return fetchJSON(`/podcast/${encodeURIComponent(sessionId)}/detail`);
+}
+
+// ============ STREAMING AUDIO ============
+/** Get the streamable audio URL for a podcast session. */
+export function getAudioStreamUrl(sessionId) {
+  return `${API_BASE}/download_podcast/${encodeURIComponent(sessionId)}`;
 }

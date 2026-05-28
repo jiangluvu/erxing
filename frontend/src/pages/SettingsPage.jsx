@@ -37,13 +37,6 @@ export default function SettingsPage() {
     <div className="p-10 max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => setPage("home")}
-            className="flex items-center gap-2 text-xs text-slate-500 hover:text-white transition-colors"
-          >
-            <ArrowLeft size={14} />
-            返回
-          </button>
           <div>
             <h1 className="text-2xl font-bold text-white">设置</h1>
             <p className="text-sm text-slate-500 mt-1">管理你的播客生成偏好</p>

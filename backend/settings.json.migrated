@@ -1,0 +1,70 @@
+{
+  "intro": {
+    "enabled": true,
+    "template": "欢迎收听播刻。今天我们要聊的是——{topic}。",
+    "speaker": "主持",
+    "voice_id": null,
+    "transition_style": "warm",
+    "transition_duration": 3.0,
+    "transition_volume": 0.15
+  },
+  "outro": {
+    "enabled": true,
+    "mode": "template",
+    "template": "以上就是本期节目的全部内容。感谢收听播刻，我们下期再见。",
+    "speaker": "主持",
+    "voice_id": null
+  },
+  "body_bgm": {
+    "enabled": false,
+    "style": "minimal",
+    "volume": 0.08,
+    "custom_path": null
+  },
+  "intro_presets": [
+    {
+      "id": "default",
+      "name": "默认开场白",
+      "template": "欢迎收听播刻。今天我们要聊的是——{topic}。",
+      "speaker": "主持",
+      "voice_id": null,
+      "transition_style": "warm",
+      "transition_duration": 3.0,
+      "transition_volume": 0.15
+    },
+    {
+      "id": "test123",
+      "name": "轻松开场",
+      "template": "哈喽大家好，今天聊一个有意思的话题——{topic}。",
+      "speaker": "嘉宾",
+      "voice_id": null,
+      "transition_style": "cool",
+      "transition_duration": 2.0,
+      "transition_volume": 0.12
+    },
+    {
+      "id": "t1",
+      "name": "Test",
+      "template": "Hello",
+      "speaker": "主持",
+      "voice_id": null
+    },
+    {
+      "id": "test1",
+      "name": "测试",
+      "template": "欢迎，{topic}。",
+      "speaker": "主持",
+      "voice_id": null
+    }
+  ],
+  "outro_presets": [
+    {
+      "id": "default",
+      "name": "默认片尾",
+      "mode": "template",
+      "template": "以上就是本期节目的全部内容。感谢收听播刻，我们下期再见。",
+      "speaker": "主持",
+      "voice_id": null
+    }
+  ]
+}

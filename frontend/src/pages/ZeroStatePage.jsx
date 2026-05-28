@@ -35,7 +35,7 @@ const durationLabelMap = {
   ultra_long: "60 分钟以上",
 };
 
-const tabs = ["链接", "文本", "上传", "我有讲稿", "探索"];
+const tabs = ["文本", "上传", "我有讲稿", "探索"];
 
 const MALE_VOICES = [
   { id: "639cdf5253a24b50a18cbdb726acce15", name: "默认主持" },
@@ -52,7 +52,6 @@ const EMOTIONS = [
 ];
 
 const placeholders = {
-  链接: "粘贴公众号/知乎文章链接，一键生成播客文稿...",
   文本: "粘贴或输入文章正文...",
   上传: "拖拽文章文件到此处，或点击上传...",
   我有讲稿: "粘贴对话稿（主持：...\\n嘉宾：...），或上传文件/图片...",
@@ -60,8 +59,10 @@ const placeholders = {
 };
 
 export default function ZeroStatePage() {
-  const [activeTab, setActiveTab] = useState("链接");
-  const [inputValue, setInputValue] = useState("");
+  const [activeTab, setActiveTab] = useState("文本");
+  const savedInputText = useAppStore((s) => s.savedInputText);
+  const setSavedInputText = useAppStore((s) => s.setSavedInputText);
+  const [inputValue, setInputValue] = useState(savedInputText || "");
 
   // Draft state (for 探索 tab)
   const [draftResult, setDraftResult] = useState(null);
@@ -84,6 +85,8 @@ export default function ZeroStatePage() {
 
   const setPage = useAppStore((s) => s.setPage);
   const setScriptData = useAppStore((s) => s.setScriptData);
+  const scriptData = useAppStore((s) => s.scriptData);
+  const drafts = useAppStore((s) => s.drafts);
   const showToast = useAppStore((s) => s.showToast);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const selectedDuration = useAppStore((s) => s.selectedDuration);
@@ -91,6 +94,9 @@ export default function ZeroStatePage() {
   const setSelectedIntroPresetId = useAppStore((s) => s.setSelectedIntroPresetId);
   const selectedOutroPresetId = useAppStore((s) => s.selectedOutroPresetId);
   const setSelectedOutroPresetId = useAppStore((s) => s.setSelectedOutroPresetId);
+  const setGenerationStatus = useAppStore((s) => s.setGenerationStatus);
+  const setGenerationProgress = useAppStore((s) => s.setGenerationProgress);
+  const setStatusText = useAppStore((s) => s.setStatusText);
 
   const [introPresets, setIntroPresets] = useState([]);
   const [outroPresets, setOutroPresets] = useState([]);
@@ -151,11 +157,16 @@ export default function ZeroStatePage() {
   }, []);
 
   const handleGenerate = async () => {
+    if (scriptLoading || draftLoading) return; // prevent double-click
     const trimmed = inputValue.trim();
     if (!trimmed || trimmed.length < 5) {
       showToast("请输入内容", "error");
       return;
     }
+    setSavedInputText(trimmed);
+    // Clear input immediately — shows submission happened
+    setInputValue("");
+    setSavedInputText("");
 
     // "探索" tab: generate article draft
     if (activeTab === "探索") {
@@ -178,17 +189,23 @@ export default function ZeroStatePage() {
     // 链接/文本 tabs: parse → generate script → script editor
     const isUrl = trimmed.startsWith("http://") || trimmed.startsWith("https://");
     setScriptLoading(true);
+    setGenerationStatus("generating");
+    setGenerationProgress(10);
+    setStatusText("正在解析内容…");
     try {
       showToast("正在解析内容...", "info");
       const parsed = await parseArticle({
         ...(isUrl ? { url: trimmed } : { text: trimmed }),
       });
+      setGenerationProgress(40);
+      setStatusText("正在生成文稿…");
       showToast("正在生成文稿...", "info");
       const result = await generateScript({
         clean_text: parsed.clean_text,
         model: selectedModel,
         duration: selectedDuration,
       });
+      setGenerationProgress(90);
       // Apply default emotion override if user selected a non-default style
       const script = result.script || [];
       if (defaultEmotion && defaultEmotion !== "正常") {
@@ -199,8 +216,26 @@ export default function ZeroStatePage() {
         });
       }
       setScriptData(script);
-      setPage("scriptEditor");
+      // Auto-save to drafts
+      const draftTitle = script[0]?.text?.slice(0, 40) || "我的草稿";
+      useAppStore.getState().addDraft({
+        id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2),
+        title: draftTitle,
+        script: script,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      setGenerationStatus("complete");
+      setStatusText("文稿已就绪");
+      setGenerationProgress(100);
+      useAppStore.getState().setPersistentNotif({
+        message: "文稿生成成功",
+        actionLabel: "点击进入文稿编辑",
+        actionPage: "scriptEditor",
+      });
     } catch (e) {
+      setGenerationStatus("failed");
+      setStatusText("生成失败");
       showToast(e.message || "生成失败", "error");
     } finally {
       setScriptLoading(false);
@@ -208,12 +243,17 @@ export default function ZeroStatePage() {
   };
 
   const handleParseScript = async () => {
+    if (scriptParsing) return;
     if (scriptFile) {
       setScriptParsing(true);
       try {
         const result = await parseScript({ file: scriptFile });
         setScriptData(result.script || []);
-        setPage("scriptEditor");
+        useAppStore.getState().setPersistentNotif({
+          message: `讲稿解析成功，共 ${result.total_turns} 轮对话`,
+          actionLabel: "点击进入文稿编辑",
+          actionPage: "scriptEditor",
+        });
         showToast(`解析成功，共 ${result.total_turns} 轮对话`, "success");
       } catch (e) {
         showToast(e.message || "解析失败", "error");
@@ -232,12 +272,34 @@ export default function ZeroStatePage() {
       return;
     }
     setScriptParsing(true);
+    setGenerationStatus("generating");
+    setGenerationProgress(30);
+    setStatusText("正在解析讲稿…");
     try {
       const result = await parseScript({ text: trimmed });
       setScriptData(result.script || []);
-      setPage("scriptEditor");
+      // Auto-save to drafts
+      const scriptArr = result.script || [];
+      const draftTitle = scriptArr[0]?.text?.slice(0, 40) || "我的草稿";
+      useAppStore.getState().addDraft({
+        id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2),
+        title: draftTitle,
+        script: scriptArr,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      setGenerationStatus("complete");
+      setGenerationProgress(100);
+      setStatusText("文稿已就绪");
+      useAppStore.getState().setPersistentNotif({
+        message: `讲稿解析成功，共 ${result.total_turns} 轮对话`,
+        actionLabel: "点击进入文稿编辑",
+        actionPage: "scriptEditor",
+      });
       showToast(`解析成功，共 ${result.total_turns} 轮对话`, "success");
     } catch (e) {
+      setGenerationStatus("failed");
+      setStatusText("解析失败");
       showToast(e.message || "解析失败", "error");
     } finally {
       setScriptParsing(false);
@@ -402,7 +464,7 @@ export default function ZeroStatePage() {
               <div className="space-y-3">
                 <textarea
                   value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
+                  onChange={(e) => { setInputValue(e.target.value); setSavedInputText(e.target.value); }}
                   className="w-full h-24 bg-[#1a1a1c] border border-[#2a2a2a] rounded-xl p-4 text-sm text-white placeholder-slate-600 resize-y outline-none focus:border-brand-pink/30 transition-all"
                   placeholder={'粘贴对话稿，每行格式：主持：... 或 嘉宾：...\n支持上传文件/图片（见下方）'}
                 />
@@ -451,7 +513,7 @@ export default function ZeroStatePage() {
             ) : (
               <textarea
                 value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
+                onChange={(e) => { setInputValue(e.target.value); setSavedInputText(e.target.value); }}
                 className="w-full h-32 bg-transparent border-none focus:ring-0 text-white placeholder-slate-600 resize-none text-sm outline-none"
                 placeholder={placeholders[activeTab]}
               />
@@ -474,6 +536,22 @@ export default function ZeroStatePage() {
             </button>
           </div>
         </div>
+
+        {/* Resume draft banner */}
+        {drafts.length > 0 && (
+          <div className="bg-[#161618] border border-brand-pink/20 rounded-2xl p-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <FileText size={16} className="text-brand-pink" />
+              <span className="text-sm text-slate-300">你有 {drafts.length} 篇未完成的文稿草稿</span>
+            </div>
+            <button
+              onClick={() => setPage("myDrafts")}
+              className="px-4 py-2 bg-brand-pink hover:bg-brand-pink/80 text-white rounded-xl text-xs font-medium transition-all"
+            >
+              查看草稿
+            </button>
+          </div>
+        )}
 
         {/* Draft Result */}
         {draftLoading && (
@@ -753,22 +831,11 @@ export default function ZeroStatePage() {
         <div className="flex flex-col items-center gap-6 pt-3">
           <button
             onClick={activeTab === "我有讲稿" ? handleParseScript : handleGenerate}
-            disabled={scriptLoading || draftLoading || scriptParsing}
-            className="group relative flex items-center gap-3 px-12 py-4 bg-white hover:bg-white/90 disabled:bg-white/60 text-black rounded-full font-bold text-lg transition-all active:scale-95 shadow-[0_0_40px_rgba(255,255,255,0.1)] disabled:cursor-not-allowed"
+            className="group relative flex items-center gap-3 px-12 py-4 bg-white hover:bg-white/90 text-black rounded-full font-bold text-lg transition-all active:scale-95 shadow-[0_0_40px_rgba(255,255,255,0.1)]"
           >
-            {scriptLoading || draftLoading || scriptParsing ? (
-              <Loader2 size={20} className="animate-spin" />
-            ) : (
-              <Sparkles size={20} />
-            )}
+            <Sparkles size={20} />
             <span>
-              {scriptLoading
-                ? "正在生成文稿..."
-                : draftLoading
-                ? "正在生成稿件..."
-                : scriptParsing
-                ? "正在解析讲稿..."
-                : activeTab === "我有讲稿"
+              {activeTab === "我有讲稿"
                 ? "解析讲稿"
                 : activeTab === "探索"
                 ? "生成稿件"

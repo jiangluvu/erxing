@@ -37,7 +37,8 @@ def init_db():
                     id TEXT PRIMARY KEY,
                     data TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'generating_opening',
-                    created_at REAL NOT NULL
+                    created_at REAL NOT NULL,
+                    user_id TEXT
                 )
             """)
             conn.execute("""
@@ -46,6 +47,20 @@ def init_db():
                     value TEXT NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    phone TEXT UNIQUE NOT NULL,
+                    username TEXT NOT NULL DEFAULT '',
+                    password_hash TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+            """)
+            # Add user_id column if missing (migration for existing DBs)
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
             conn.commit()
         finally:
             conn.close()
@@ -54,7 +69,7 @@ def init_db():
 # ── Session operations ──
 
 
-def session_create(session_id: str, request_id: str, duration: str, title: str) -> dict:
+def session_create(session_id: str, request_id: str, duration: str, title: str, user_id: str | None = None) -> dict:
     session = {
         "status": "generating_opening",
         "progress": 0,
@@ -76,8 +91,8 @@ def session_create(session_id: str, request_id: str, duration: str, title: str) 
         conn = get_conn()
         try:
             conn.execute(
-                "INSERT OR REPLACE INTO sessions (id, data, status, created_at) VALUES (?, ?, ?, ?)",
-                (session_id, json.dumps(session, ensure_ascii=False), session["status"], session["created_at"]),
+                "INSERT OR REPLACE INTO sessions (id, data, status, created_at, user_id) VALUES (?, ?, ?, ?, ?)",
+                (session_id, json.dumps(session, ensure_ascii=False), session["status"], session["created_at"], user_id),
             )
             conn.commit()
         finally:
@@ -127,19 +142,31 @@ def session_delete(session_id: str):
             conn.close()
 
 
-def session_list(status_filter: tuple[str, ...] | None = None) -> list[dict]:
-    """Return all sessions, optionally filtered by status."""
+def session_list(status_filter: tuple[str, ...] | None = None, user_id: str | None = None) -> list[dict]:
+    """Return sessions, optionally filtered by status and/or user_id.
+
+    When user_id is provided, returns sessions owned by that user.
+    When user_id is None (anonymous), returns sessions without an owner (backwards compat).
+    """
     with _lock:
         conn = get_conn()
         try:
+            conditions = []
+            params = []
             if status_filter:
                 placeholders = ",".join("?" for _ in status_filter)
-                rows = conn.execute(
-                    f"SELECT data FROM sessions WHERE status IN ({placeholders}) ORDER BY created_at DESC",
-                    status_filter,
-                ).fetchall()
+                conditions.append(f"status IN ({placeholders})")
+                params.extend(status_filter)
+            if user_id is not None:
+                conditions.append("user_id = ?")
+                params.append(user_id)
             else:
-                rows = conn.execute("SELECT data FROM sessions ORDER BY created_at DESC").fetchall()
+                conditions.append("user_id IS NULL")
+            where = " AND ".join(conditions) if conditions else "1"
+            rows = conn.execute(
+                f"SELECT data FROM sessions WHERE {where} ORDER BY created_at DESC",
+                params,
+            ).fetchall()
             return [json.loads(r["data"]) for r in rows]
         finally:
             conn.close()
@@ -242,6 +269,72 @@ def get_audio_path(session_id: str) -> str | None:
     if fallback.exists():
         return str(fallback)
     return None
+
+
+# ── Session merge ──
+
+
+def session_claim_all(session_ids: list[str], user_id: str):
+    """Assign user_id to anonymous sessions (merge on register/login)."""
+    if not session_ids:
+        return
+    with _lock:
+        conn = get_conn()
+        try:
+            placeholders = ",".join("?" for _ in session_ids)
+            conn.execute(
+                f"UPDATE sessions SET user_id = ? WHERE id IN ({placeholders}) AND user_id IS NULL",
+                (user_id, *session_ids),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+# ── User operations ──
+
+
+def user_create(phone: str, username: str, password_hash: str) -> str:
+    """Create a new user. Returns user_id."""
+    import uuid
+    user_id = str(uuid.uuid4())
+    with _lock:
+        conn = get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO users (id, phone, username, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+                (user_id, phone, username, password_hash, time.time()),
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            raise ValueError("该手机号已注册")
+        finally:
+            conn.close()
+    return user_id
+
+
+def user_get_by_phone(phone: str) -> dict | None:
+    with _lock:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT * FROM users WHERE phone = ?", (phone,)).fetchone()
+            if row is None:
+                return None
+            return dict(row)
+        finally:
+            conn.close()
+
+
+def user_get_by_id(user_id: str) -> dict | None:
+    with _lock:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            if row is None:
+                return None
+            return dict(row)
+        finally:
+            conn.close()
 
 
 # ── Migration from JSON files ──

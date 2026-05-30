@@ -35,6 +35,8 @@ export default function SideNavBar() {
   const currentPage = useAppStore((s) => s.currentPage);
   const setPage = useAppStore((s) => s.setPage);
   const genCount = useAppStore((s) => s.genCount);
+  const user = useAppStore((s) => s.user);
+  const isAuthenticated = useAppStore((s) => s.isAuthenticated);
 
   const isActive = (id) => currentPage === id;
 
@@ -76,7 +78,9 @@ export default function SideNavBar() {
     <aside className="fixed left-0 top-0 h-full w-[240px] bg-[#1a1a1a] border-r border-[#2a2a2a] flex flex-col z-50">
       <div className="p-6 flex-1 overflow-y-auto">
         <h2 className="text-xs font-medium text-slate-500 mb-6">
-          欢迎 播刻 新用户!
+          {isAuthenticated && user
+            ? `欢迎回来，${user.username || user.phone}`
+            : "欢迎 播刻 新用户!"}
         </h2>
         <div className="flex items-center gap-3 mb-8">
           <span className="text-2xl font-black text-brand-pink">播刻</span>
@@ -131,7 +135,7 @@ export default function SideNavBar() {
       {/* Generation Progress */}
       <GenerationProgress />
 
-      <div className="p-4 border-t border-[#2a2a2a]">
+      <div className="p-4 border-t border-[#2a2a2a] space-y-1">
         <button
           onClick={() => setPage("account")}
           className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all text-left ${
@@ -141,7 +145,7 @@ export default function SideNavBar() {
           }`}
         >
           <User size={18} strokeWidth={2} className={isActive("account") ? "text-brand-pink" : ""} />
-          <span>账号信息</span>
+          <span>{isAuthenticated ? "账号信息" : "登录 / 注册"}</span>
         </button>
       </div>
     </aside>

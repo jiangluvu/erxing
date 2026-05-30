@@ -1,8 +1,17 @@
 const API_BASE = "/api";
 
+let _token = null;
+export function _setAuthToken(token) {
+  _token = token;
+}
+
+function getAuthHeaders() {
+  return _token ? { Authorization: `Bearer ${_token}` } : {};
+}
+
 async function fetchJSON(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...options.headers },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...options.headers },
     ...options,
   });
   if (!res.ok) {
@@ -13,7 +22,10 @@ async function fetchJSON(path, options = {}) {
 }
 
 async function fetchBlob(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, options);
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: { ...getAuthHeaders(), ...options.headers },
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.blob();
 }

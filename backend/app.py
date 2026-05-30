@@ -10,11 +10,14 @@ from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
+import jwt as pyjwt
 import anthropic
 from database import (
     init_db, migrate_from_json,
     session_create, session_get, session_set, session_list, session_delete,
     settings_load, settings_save, save_audio_file, get_audio_path,
+    user_create, user_get_by_phone, user_get_by_id, session_claim_all,
 )
 load_dotenv()
 app = Flask(__name__)
@@ -79,6 +82,7 @@ def _load_metrics(path: Path, days: int = 30) -> list[dict]:
 # ── Config ──
 ZHI_API_KEY = os.environ.get("ZHI_API_KEY")
 ZHI_BASE_URL = "https://api.zhizengzeng.com/anthropic"
+JWT_SECRET = os.environ.get("JWT_SECRET") or ZHI_API_KEY or "boke-dev-secret"
 ZHI_MODEL = "deepseek-v4-pro"
 EVAL_MODEL = "gpt-4o-mini"
 ZHI_API_BASE = "https://api.zhizengzeng.com/v1/chat/completions"
@@ -2290,8 +2294,8 @@ def _generate_arranged_podcast(
 
 # ── Session Storage (uses SQLite via database.py) ──
 
-def _session_create(session_id: str, request_id: str, duration: str, title: str) -> dict:
-    return session_create(session_id, request_id, duration, title)
+def _session_create(session_id: str, request_id: str, duration: str, title: str, user_id: str | None = None) -> dict:
+    return session_create(session_id, request_id, duration, title, user_id)
 
 def _session_get(session_id: str) -> dict | None:
     return session_get(session_id)
@@ -2395,7 +2399,7 @@ def generate_opening(topic: str) -> list[dict]:
     return dialogue[:2]
 
 
-def _start_generation(url: str, text: str, duration: str, title: str | None = None, request_id: str | None = None, model: str | None = None, high_quality: bool = False, bg_music: bool = False, voice_map: dict | None = None, prompt_mode: str = "original", intro_preset_id: str | None = None, outro_preset_id: str | None = None) -> tuple[str, list[dict]]:
+def _start_generation(url: str, text: str, duration: str, title: str | None = None, request_id: str | None = None, model: str | None = None, high_quality: bool = False, bg_music: bool = False, voice_map: dict | None = None, prompt_mode: str = "original", intro_preset_id: str | None = None, outro_preset_id: str | None = None, user_id: str | None = None) -> tuple[str, list[dict]]:
     """Create session, generate opening script, and start background thread.
     Returns (session_id, opening_script)."""
     if not request_id:
@@ -2407,7 +2411,7 @@ def _start_generation(url: str, text: str, duration: str, title: str | None = No
     if not title:
         title = "未知话题"
 
-    _session_create(session_id, request_id, duration, title)
+    _session_create(session_id, request_id, duration, title, getattr(g, 'user_id', None))
     _session_set(session_id, "model", model)
     _session_set(session_id, "high_quality", high_quality)
     _session_set(session_id, "bg_music", bg_music)
@@ -2605,9 +2609,128 @@ def _session_cleanup_loop():
         except Exception as e:
             logger.warning(f"Session cleanup error: {e}")
 
+
+# ── Auth helpers ──
+
+from flask import g
+
+def _require_auth(f):
+    """Decorator: require valid JWT. Sets g.user_id on success."""
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.headers.get("Authorization", "")
+        token = auth.replace("Bearer ", "") if auth.startswith("Bearer ") else ""
+        if not token:
+            return jsonify({"error": "请先登录"}), 401
+        try:
+            payload = pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+            g.user_id = payload["user_id"]
+        except pyjwt.ExpiredSignatureError:
+            return jsonify({"error": "登录已过期，请重新登录"}), 401
+        except Exception:
+            return jsonify({"error": "无效的登录凭证"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+def _optional_auth(f):
+    """Decorator: attach g.user_id if valid JWT present, continue as anonymous otherwise."""
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.headers.get("Authorization", "")
+        token = auth.replace("Bearer ", "") if auth.startswith("Bearer ") else ""
+        g.user_id = None
+        if token:
+            try:
+                payload = pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+                g.user_id = payload["user_id"]
+            except Exception:
+                pass
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ── Auth Routes ──
+
+
+@app.route("/api/auth/register", methods=["POST"])
+def api_auth_register():
+    data = request.get_json(silent=True) or {}
+    phone = (data.get("phone") or "").strip()
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    session_ids = data.get("session_ids") or []
+
+    # Validate phone
+    if not re.match(r"^\d{8,15}$", phone):
+        return jsonify({"error": "手机号格式不正确（8-15位数字）"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "密码至少6位"}), 400
+    if not username:
+        username = phone[-4:]  # Default username from last 4 digits
+
+    try:
+        password_hash = generate_password_hash(password)
+        user_id = user_create(phone, username, password_hash)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+    except Exception as e:
+        logger.error(f"Register failed: {e}")
+        return jsonify({"error": "注册失败"}), 500
+
+    # Merge anonymous sessions if provided
+    if session_ids:
+        session_claim_all(session_ids, user_id)
+
+    token = pyjwt.encode(
+        {"user_id": user_id, "phone": phone, "exp": datetime.now(timezone.utc) + timedelta(days=30)},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+    return jsonify({"token": token, "user": {"id": user_id, "phone": phone, "username": username}})
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    data = request.get_json(silent=True) or {}
+    phone = (data.get("phone") or "").strip()
+    password = data.get("password") or ""
+    session_ids = data.get("session_ids") or []
+
+    user = user_get_by_phone(phone)
+    if not user or not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "手机号或密码错误"}), 401
+
+    # Merge anonymous sessions if provided
+    if session_ids:
+        session_claim_all(session_ids, user["id"])
+
+    token = pyjwt.encode(
+        {"user_id": user["id"], "phone": user["phone"], "exp": datetime.now(timezone.utc) + timedelta(days=30)},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+    return jsonify({
+        "token": token,
+        "user": {"id": user["id"], "phone": user["phone"], "username": user["username"]},
+    })
+
+
+@app.route("/api/auth/me", methods=["GET"])
+@_require_auth
+def api_auth_me():
+    user = user_get_by_id(g.user_id)
+    if not user:
+        return jsonify({"error": "用户不存在"}), 404
+    return jsonify({
+        "user": {"id": user["id"], "phone": user["phone"], "username": user["username"]},
+    })
+
 # ── Routes ──
 
 @app.route("/api/generate_streaming", methods=["POST"])
+@_optional_auth
 def api_generate_streaming():
     """TTFA-optimized endpoint: generate opening → return audio immediately, background full gen."""
     data = request.get_json(silent=True) or {}
@@ -2633,7 +2756,7 @@ def api_generate_streaming():
         return jsonify({"error": "服务端未配置 API 密钥"}), 500
 
     try:
-        session_id, opening_script = _start_generation(url, text, duration, request_id=request_id, model=model, high_quality=high_quality, bg_music=bg_music, voice_map=voice_map, prompt_mode=prompt_mode, intro_preset_id=intro_preset_id, outro_preset_id=outro_preset_id)
+        session_id, opening_script = _start_generation(url, text, duration, request_id=request_id, model=model, high_quality=high_quality, bg_music=bg_music, voice_map=voice_map, prompt_mode=prompt_mode, intro_preset_id=intro_preset_id, outro_preset_id=outro_preset_id, user_id=getattr(g, 'user_id', None))
 
         # TTS opening (~2s)
         session = _session_get(session_id) or {}
@@ -3190,6 +3313,7 @@ def api_parse_script():
 
 
 @app.route("/api/tts", methods=["POST"])
+@_optional_auth
 def api_tts():
     data = request.get_json(silent=True) or {}
     script = data.get("script", [])
@@ -3228,7 +3352,7 @@ def api_tts():
     # ── Create a session so this podcast appears in "我的播客" ──
     session_id = str(uuid.uuid4())
     duration = data.get("duration", "free")
-    _session_create(session_id, request_id, duration, title)
+    _session_create(session_id, request_id, duration, title, getattr(g, 'user_id', None))
     _session_set(session_id, "full_script", script)
     _session_set(session_id, "voice_map", voice_map)
     _session_set(session_id, "platform", "网页")
@@ -3439,10 +3563,11 @@ def api_podcast_detail(session_id: str):
 
 
 @app.route("/api/podcasts", methods=["GET"])
+@_optional_auth
 def api_podcasts():
-    """Return list of all completed podcasts."""
+    """Return list of completed podcasts, filtered by user if authenticated."""
     items = []
-    for s in session_list(("complete", "failed")):
+    for s in session_list(("complete", "failed"), user_id=g.user_id):
         items.append({
             "id": s.get("id", ""),
             "title": s.get("title", ""),

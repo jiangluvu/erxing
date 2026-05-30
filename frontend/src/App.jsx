@@ -3,7 +3,7 @@ import { useAppStore } from "./store";
 import SideNavBar from "./components/SideNavBar";
 import Toast from "./components/Toast";
 import PersistentNotif from "./components/PersistentNotif";
-import { getPodcasts, getGenerationStatus, downloadPodcast } from "./api";
+import { getPodcasts, getGenerationStatus, getAudioStreamUrl } from "./api";
 import ZeroStatePage from "./pages/ZeroStatePage";
 import MyPodcastsPage from "./pages/MyPodcastsPage";
 import GenerationPage from "./pages/GenerationPage";
@@ -53,6 +53,8 @@ const pages = {
 export default function App() {
   const currentPage = useAppStore((s) => s.currentPage);
   const setGenCount = useAppStore((s) => s.setGenCount);
+  const token = useAppStore((s) => s.token);
+  const setUser = useAppStore((s) => s.setUser);
   const Page = pages[currentPage] || ZeroStatePage;
 
   const sessionId = useAppStore((s) => s.sessionId);
@@ -64,6 +66,19 @@ export default function App() {
   const setTimings = useAppStore((s) => s.setTimings);
   const setFullAudioUrl = useAppStore((s) => s.setFullAudioUrl);
   const pollRef = useRef(null);
+
+  // Auth verification on mount (restore session from stored token)
+  useEffect(() => {
+    if (!token) return;
+    fetch("/api/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.user) setUser(data.user);
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     getPodcasts()
@@ -119,10 +134,9 @@ export default function App() {
             }
 
             try {
-              const fullBlob = await downloadPodcast(sessionId);
-              setFullAudioUrl(URL.createObjectURL(fullBlob));
+              setFullAudioUrl(getAudioStreamUrl(sessionId));
             } catch (e) {
-              console.warn("Full audio download failed:", e);
+              console.warn("Full audio URL failed:", e);
             }
           } else if (data.status === "failed") {
             clearInterval(pollRef.current);

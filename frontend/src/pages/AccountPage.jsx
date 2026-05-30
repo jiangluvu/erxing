@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { User, AlertTriangle, Loader2, ArrowLeft } from "lucide-react";
+import { User, AlertTriangle, Loader2, LogIn, LogOut } from "lucide-react";
 import { useAppStore } from "../store";
 
 export default function AccountPage() {
   const setPage = useAppStore((s) => s.setPage);
-  const userName = useAppStore((s) => s.userName);
-  const genCount = useAppStore((s) => s.genCount);
+  const user = useAppStore((s) => s.user);
+  const isAuthenticated = useAppStore((s) => s.isAuthenticated);
+  const logout = useAppStore((s) => s.logout);
   const showToast = useAppStore((s) => s.showToast);
   const [clearing, setClearing] = useState(false);
 
@@ -27,6 +28,12 @@ export default function AccountPage() {
     }
   };
 
+  const handleLogout = () => {
+    logout();
+    showToast("已退出登录", "info");
+    setPage("home");
+  };
+
   return (
     <div className="p-10 max-w-2xl mx-auto">
       <div className="flex items-center gap-4 mb-8">
@@ -43,18 +50,38 @@ export default function AccountPage() {
           个人资料
         </h2>
         <div className="bg-[#161618] border border-[#2a2a2a] rounded-2xl p-5">
-          <div className="flex items-center gap-4 mb-5">
-            <div className="w-12 h-12 rounded-full bg-brand-pink/10 flex items-center justify-center text-brand-pink font-bold text-lg">
-              {userName?.[0] || "U"}
+          {isAuthenticated && user ? (
+            <div className="flex items-center gap-4 mb-5">
+              <div className="w-12 h-12 rounded-full bg-brand-pink/10 flex items-center justify-center text-brand-pink font-bold text-lg">
+                {(user.username || user.phone)?.[0] || "U"}
+              </div>
+              <div className="flex-1">
+                <div className="text-sm font-semibold text-white">{user.username || user.phone}</div>
+                <div className="text-xs text-slate-500">{user.phone}</div>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-white transition-all border border-white/5"
+              >
+                <LogOut size={14} />
+                退出登录
+              </button>
             </div>
-            <div className="flex-1">
-              <div className="text-sm font-semibold text-white">{userName}</div>
-              <div className="text-xs text-slate-500">免费用户 · 已生成 {genCount} 个播客</div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold text-white">未登录</div>
+                <div className="text-xs text-slate-500 mt-0.5">登录后可同步播客与收藏</div>
+              </div>
+              <button
+                onClick={() => setPage("login")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-pink/10 hover:bg-brand-pink/20 text-xs text-brand-pink transition-all"
+              >
+                <LogIn size={14} />
+                登录
+              </button>
             </div>
-            <button className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-white transition-all border border-white/5">
-              编辑资料
-            </button>
-          </div>
+          )}
         </div>
       </div>
 

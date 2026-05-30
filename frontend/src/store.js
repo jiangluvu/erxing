@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { _setAuthToken } from "./api";
 
 export const useAppStore = create((set, get) => ({
   // Navigation
@@ -192,6 +193,31 @@ export const useAppStore = create((set, get) => ({
         typeof updater === "function" ? updater(state.genCount) : updater,
     })),
 
+  // Auth
+  user: null,
+  token: (typeof window !== "undefined" ? localStorage.getItem("boke_token") : null) || null,
+  isAuthenticated: false,
+  setUser: (user) => set({ user, isAuthenticated: !!user }),
+  setToken: (token) => {
+    _setAuthToken(token);
+    if (typeof window !== "undefined") {
+      if (token) localStorage.setItem("boke_token", token);
+      else localStorage.removeItem("boke_token");
+    }
+    set({ token });
+  },
+  logout: () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("boke_token");
+    }
+    set({
+      user: null,
+      token: null,
+      isAuthenticated: false,
+      userName: "旅行者",
+    });
+  },
+
   // Toast
   toast: null,
   showToast: (message, type = "info") => set({ toast: { message, type } }),
@@ -219,3 +245,7 @@ export const useAppStore = create((set, get) => ({
   chapters: [],
   setChapters: (ch) => set({ chapters: ch }),
 }));
+
+// Sync initial auth token with API module
+const initialToken = typeof window !== "undefined" ? localStorage.getItem("boke_token") : null;
+if (initialToken) _setAuthToken(initialToken);
